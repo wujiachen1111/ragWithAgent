@@ -1,0 +1,19 @@
+database:
+  host: ${DB_HOST}
+  port: ${DB_PORT:5432}
+  name: ${DB_NAME}
+  user: ${DB_USER}
+  password: ${DB_PASSWORD}
+  
+services:
+  yuqing_sentiment:
+    host: yuqing-sentiment
+    port: 8000
+    
+  rag_analysis:
+    host: rag-analysis
+    port: 8010
+    
+logging:
+  level: INFO
+  format: json

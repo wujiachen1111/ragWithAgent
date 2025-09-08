@@ -1,0 +1,22 @@
+api:
+  title: "RAG分析服务"
+  version: "0.1.0"
+  
+services:
+  yuqing:
+    url: "${YUQING_API_URL:http://localhost:8000}"
+    timeout: 30
+    
+  llm_gateway:
+    url: "${LLM_GATEWAY_URL:http://localhost:8002}"
+    model: "${LLM_MODEL:deepseek-v3}"
+    
+analysis:
+  graph_workflow:
+    enabled: true
+    max_nodes: 10
+    
+  sentiment:
+    enabled: true
+    cache_ttl: 3600
+

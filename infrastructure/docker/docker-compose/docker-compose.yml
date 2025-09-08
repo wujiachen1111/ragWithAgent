@@ -1,0 +1,61 @@
+# 智策 (InsightFolio) 本地开发环境 Docker Compose 配置
+# 提供所需的基础设施服务（PostgreSQL, Redis, ChromaDB等）
+
+version: '3.8'
+
+services:
+  # PostgreSQL 数据库
+  postgres:
+    image: postgres:15-alpine
+    container_name: insightfolio_postgres
+    environment:
+      POSTGRES_DB: insightfolio_dev
+      POSTGRES_USER: insightfolio
+      POSTGRES_PASSWORD: insightfolio_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U insightfolio"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis 缓存
+  redis:
+    image: redis:7-alpine
+    container_name: insightfolio_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ChromaDB 向量数据库（可选，也可以使用本地文件模式）
+  # chroma:
+  #   image: chromadb/chroma:latest
+  #   container_name: insightfolio_chroma
+  #   ports:
+  #     - "8001:8000"
+  #   volumes:
+  #     - chroma_data:/chroma/chroma
+  #   environment:
+  #     - IS_PERSISTENT=TRUE
+  #     - PERSIST_DIRECTORY=/chroma/chroma
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  # chroma_data:
+  #   driver: local
+
+networks:
+  default:
+    name: insightfolio_network

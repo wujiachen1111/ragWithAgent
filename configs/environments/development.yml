@@ -1,0 +1,19 @@
+database:
+  host: localhost
+  port: 5432
+  name: news_analytics
+  user: postgres
+  password: postgres
+  
+services:
+  yuqing_sentiment:
+    host: localhost
+    port: 8000
+    
+  rag_analysis:
+    host: localhost
+    port: 8010
+    
+logging:
+  level: DEBUG
+  format: detailed

@@ -1,0 +1,36 @@
+# 🏛️ 智策 (InsightFolio) - 企业级微服务启动配置
+# 使用 honcho start 命令启动所有服务
+
+# 🔌 网关服务域 (Gateway Domain)
+api_gateway: uvicorn api_gateway.main:app --host 0.0.0.0 --port 8080 --app-dir services_new/gateway/api-gateway/src --reload
+auth_service: uvicorn auth_service.main:app --host 0.0.0.0 --port 8005 --app-dir services_new/gateway/auth-service/src --reload
+
+# 🧠 核心业务域 (Core Domain)  
+decision_engine: uvicorn main:app --host 0.0.0.0 --port 8000 --app-dir services_new/core/decision-engine/src --reload
+analysis_orchestrator: uvicorn main:app --host 0.0.0.0 --port 8006 --app-dir services_new/core/analysis-orchestrator/src --reload
+
+# 📊 数据服务域 (Data Domain)
+stock_market_data: uvicorn main:app --host 0.0.0.0 --port 8003 --app-dir services_new/data/stock-market-data/src --reload
+sentiment_data: uvicorn main:app --host 0.0.0.0 --port 8004 --app-dir services_new/data/sentiment-data/src --reload
+knowledge_base: uvicorn main:app --host 0.0.0.0 --port 8007 --app-dir services_new/data/knowledge-base/src --reload
+
+# 💡 智能服务域 (Intelligence Domain)
+llm_gateway: uvicorn main:app --host 0.0.0.0 --port 8002 --app-dir services_new/intelligence/llm-gateway/src --reload  
+embedding_service: uvicorn main:app --host 0.0.0.0 --port 8001 --app-dir services_new/intelligence/embedding-service/src --reload
+contrastive_rag: uvicorn main:app --host 0.0.0.0 --port 8008 --app-dir services_new/intelligence/contrastive-rag/src --reload
+
+# 📝 服务启动说明:
+# 1. API网关 (8080) - 统一入口，所有外部请求通过此端口访问
+# 2. 认证服务 (8005) - 用户认证和权限控制  
+# 3. 决策引擎 (8000) - 核心智能决策服务
+# 4. 分析编排 (8006) - 分析任务编排和调度
+# 5. 股票数据 (8003) - 股票市场数据服务  
+# 6. 舆情数据 (8004) - 舆情数据采集和分析
+# 7. 知识库   (8007) - 向量知识库服务
+# 8. LLM网关  (8002) - 大语言模型接入网关
+# 9. 嵌入服务 (8001) - 文本嵌入向量化服务
+# 10.对比RAG (8008) - 对比学习增强RAG服务
+
+# 🚀 启动方式:
+# honcho -f deployments/local/Procfile start          # 启动所有服务
+# honcho -f deployments/local/Procfile start api_gateway decision_engine  # 启动指定服务
