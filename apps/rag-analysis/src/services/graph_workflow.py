@@ -7,25 +7,25 @@ from datetime import datetime
 from typing_extensions import TypedDict
 from langgraph.graph import StateGraph, START, END
 
-from analysis.models.agents import (
+from ..analysis.models.agents import (
     AnalysisRequestVO,
     AgentFindings,
     SynthesizedDecision,
     AnalysisResponseVO,
     Action,
 )
-from analysis.services.agents.roles import (
+from ..analysis.services.agents.roles import (
     NarrativeArbitrageurAgent,
     FirstOrderImpactQuantAgent,
     ContrarianSkepticAgent,
     SecondOrderEffectsStrategistAgent,
 )
-from analysis.services.agents.enhanced_roles import (
+from ..analysis.services.agents.enhanced_roles import (
     RiskController,
     MacroStrategist
 )
-from analysis.services.agents.enhanced_data_specialist import EnhancedDataIntelligenceSpecialist
-from analysis.services.synthesizer import ChiefSynthesizer
+from ..analysis.services.agents.enhanced_data_specialist import EnhancedDataIntelligenceSpecialist
+from ..analysis.services.synthesizer import ChiefSynthesizer
 
 
 class GraphState(TypedDict, total=False):
