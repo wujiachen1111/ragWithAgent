@@ -17,11 +17,13 @@ from ..sentiment_client import SentimentAPIClient, SentimentQueryParam
 from ..yuqing_adapter import YuQingNewsAdapter, YuQingConfig
 from ...models.agents import AnalysisRequestVO
 from ...models.enhanced_agents import DataIntelligenceReport
+# 新增导入 stock_adapter
+from ....services.stock_client import stock_adapter
 
 
 class EnhancedDataIntelligenceSpecialist(BaseAgent):
     """
-    增强版数据情报专家 - 集成舆情API的专业数据分析师
+    增强版数据情报专家 - 集成舆情API和股票数据API的专业数据分析师
 
     核心能力：
     1. 实时舆情数据采集与分析
@@ -45,52 +47,36 @@ class EnhancedDataIntelligenceSpecialist(BaseAgent):
         )
         self.yuqing_adapter = YuQingNewsAdapter(yuqing_config)
 
+        # 新增：初始化 Stock Agent 适配器
+        self.stock_adapter = stock_adapter
+
     async def analyze(self, request: AnalysisRequestVO) -> DataIntelligenceReport:
         """执行增强版数据情报收集和分析"""
         client = LLMClient()
 
-        # 第一阶段：并行收集基础数据
-        basic_data_tasks = [
-            self._collect_market_fundamentals(request, client),
-            self._collect_technical_indicators(request, client),
-            self._assess_market_microstructure(request, client)
-        ]
-
-        # 第二阶段：并行收集舆情数据（YuQing-new核心功能）
-        sentiment_data_tasks = [
+        # 第一阶段：并行收集中来自Stock Agent的核心数据 和 来自Yuqing的舆情数据
+        core_data_tasks = [
+            self._collect_stock_data_from_agent(request), # <--- 使用真实数据
             self._collect_yuqing_comprehensive_data(request),
             self._get_yuqing_stock_impact_analysis(request),
             self._get_yuqing_market_hotspots(request),
             self._get_yuqing_entity_analysis(request)
         ]
 
-        # 并行执行所有数据收集任务
-        all_tasks = basic_data_tasks + sentiment_data_tasks
-        results = await asyncio.gather(*all_tasks, return_exceptions=True)
+        results = await asyncio.gather(*core_data_tasks, return_exceptions=True)
 
         # 解析结果
-        market_fundamentals = results[0] if not isinstance(
-            results[0], Exception) else {}
-        technical_indicators = results[1] if not isinstance(
-            results[1], Exception) else {}
-        market_microstructure = results[2] if not isinstance(
-            results[2], Exception) else {}
+        stock_data = results[0] if not isinstance(results[0], Exception) else {"error": str(results[0])}
+        yuqing_comprehensive = results[1] if not isinstance(results[1], Exception) else {}
+        yuqing_stock_impact = results[2] if not isinstance(results[2], Exception) else {}
+        yuqing_hotspots = results[3] if not isinstance(results[3], Exception) else {}
+        yuqing_entities = results[4] if not isinstance(results[4], Exception) else {}
 
-        yuqing_comprehensive = results[3] if not isinstance(
-            results[3], Exception) else {}
-        yuqing_stock_impact = results[4] if not isinstance(
-            results[4], Exception) else {}
-        yuqing_hotspots = results[5] if not isinstance(
-            results[5], Exception) else {}
-        yuqing_entities = results[6] if not isinstance(
-            results[6], Exception) else {}
 
-        # 第三阶段：数据融合与异常检测
+        # 第三阶段：数据融合与异常检测 (简化并调整)
         fusion_tasks = [
             self._fuse_multi_source_data(
-                market_fundamentals,
-                technical_indicators,
-                market_microstructure,
+                stock_data,
                 yuqing_comprehensive,
                 yuqing_stock_impact,
                 yuqing_hotspots,
@@ -102,9 +88,10 @@ class EnhancedDataIntelligenceSpecialist(BaseAgent):
                 yuqing_hotspots,
                 client),
             self._assess_data_coherence(
-                market_fundamentals,
+                stock_data.get("data", {}).get("market_context", {}),
                 yuqing_comprehensive,
-                client)]
+                client)
+        ]
 
         fusion_result, anomalies, coherence_assessment = await asyncio.gather(*fusion_tasks)
 
@@ -112,6 +99,27 @@ class EnhancedDataIntelligenceSpecialist(BaseAgent):
         return await self._generate_intelligence_report(
             request, fusion_result, anomalies, coherence_assessment, client
         )
+
+    async def _collect_stock_data_from_agent(self, request: AnalysisRequestVO) -> Dict[str, Any]:
+        """
+        通过 Stock Agent 客户端获取全面的股票数据
+        """
+        try:
+            self.logger.info(f"向Stock Agent请求 {len(request.symbols)} 只股票的数据...")
+            # 使用 comprehensive 模式一次性获取多种数据
+            stock_context = await self.stock_adapter.get_investment_context(
+                symbols=request.symbols,
+                analysis_type="comprehensive"
+            )
+            if stock_context and not stock_context.get("error"):
+                self.logger.info("✅ 成功从Stock Agent获取股票数据")
+                return stock_context
+            else:
+                self.logger.warning(f"⚠️ 从Stock Agent获取股票数据失败: {stock_context.get('error')}")
+                return {"error": "Failed to get stock data from agent."}
+        except Exception as e:
+            self.logger.error(f"❌ 调用Stock Agent时发生异常: {e}")
+            return {"error": f"Exception while calling stock agent: {e}"}
 
     async def _collect_yuqing_comprehensive_data(self, request: AnalysisRequestVO) -> Dict[str, Any]:
         """使用YuQing-new收集综合舆情数据 - 主要数据源"""
@@ -348,233 +356,30 @@ class EnhancedDataIntelligenceSpecialist(BaseAgent):
         }
         return mapping.get(time_horizon, 24)
 
-    async def _collect_comprehensive_sentiment(self, request: AnalysisRequestVO) -> Dict[str, Any]:
-        """收集综合舆情数据 - 核心增强功能"""
-        try:
-            # 构建查询参数
-            keywords = [request.topic]
-            if request.headline:
-                keywords.append(request.headline)
-
-            # 从内容中提取关键词
-            extracted_keywords = await self._extract_keywords_from_content(request.content)
-            keywords.extend(extracted_keywords[:3])  # 添加前3个关键词
-
-            # 获取综合舆情报告
-            sentiment_report = await self.sentiment_client.get_comprehensive_sentiment_report(
-                symbols=request.symbols,
-                keywords=keywords,
-                time_range=self._map_time_horizon_to_range(request.time_horizon)
-            )
-
-            # 转换为标准格式
-            return {
-                "overall_sentiment": sentiment_report.overall_sentiment,
-                "sentiment_trend": sentiment_report.sentiment_trend,
-                "hot_topics": sentiment_report.hot_topics,
-                "influential_sources": sentiment_report.influential_sources,
-                "sentiment_anomalies": sentiment_report.sentiment_anomalies,
-                "volume_spikes": sentiment_report.volume_spikes,
-                "data_quality": sentiment_report.average_credibility,
-                "total_mentions": sentiment_report.total_processed,
-                "collection_timestamp": sentiment_report.collection_time.isoformat(),
-                "processing_duration": sentiment_report.processing_duration}
-
-        except Exception as e:
-            return {
-                "error": f"舆情数据收集失败: {str(e)}",
-                "overall_sentiment": {
-                    "positive": 0.33,
-                    "negative": 0.33,
-                    "neutral": 0.34},
-                "data_quality": 0.0,
-                "total_mentions": 0}
-
-    async def _analyze_news_flow_impact(self, request: AnalysisRequestVO) -> Dict[str, Any]:
-        """分析新闻流影响"""
-        try:
-            keywords = [request.topic]
-            if request.headline:
-                keywords.append(request.headline)
-
-            news_analysis = await self.sentiment_client.get_news_flow_analysis(
-                keywords=keywords,
-                time_range=self._map_time_horizon_to_range(request.time_horizon)
-            )
-
-            return {
-                "news_volume": news_analysis.get(
-                    "volume_metrics", {}), "impact_score": news_analysis.get(
-                    "impact_analysis", {}), "credibility_distribution": news_analysis.get(
-                    "credibility_stats", {}), "propagation_speed": news_analysis.get(
-                    "propagation_metrics", {}), "key_narratives": news_analysis.get(
-                        "narrative_themes", []), "source_diversity": news_analysis.get(
-                            "source_distribution", {})}
-
-        except Exception as e:
-            return {
-                "error": f"新闻流分析失败: {str(e)}",
-                "news_volume": {"total": 0, "trend": "stable"},
-                "impact_score": {"overall": 0.5}
-            }
-
-    async def _monitor_social_media_buzz(self, request: AnalysisRequestVO) -> Dict[str, Any]:
-        """监控社交媒体热度"""
-        try:
-            social_buzz = await self.sentiment_client.get_social_media_buzz(
-                symbols=request.symbols,
-                platforms=["weibo", "wechat", "zhihu", "xueqiu"]
-            )
-
-            return {
-                "mention_volume": social_buzz.get(
-                    "volume_metrics", {}), "sentiment_distribution": social_buzz.get(
-                    "sentiment_breakdown", {}), "influencer_activity": social_buzz.get(
-                    "influencer_metrics", {}), "viral_content": social_buzz.get(
-                    "viral_posts", []), "platform_breakdown": social_buzz.get(
-                        "platform_stats", {}), "engagement_metrics": social_buzz.get(
-                            "engagement_data", {})}
-
-        except Exception as e:
-            return {
-                "error": f"社交媒体监控失败: {str(e)}", "mention_volume": {
-                    "total": 0, "trend": "stable"}, "sentiment_distribution": {
-                    "positive": 0.33, "negative": 0.33, "neutral": 0.34}}
-
-    async def _track_research_sentiment_shift(self, request: AnalysisRequestVO) -> Dict[str, Any]:
-        """跟踪研报情感变化"""
-        try:
-            research_sentiment = await self.sentiment_client.get_research_sentiment(
-                symbols=request.symbols
-            )
-
-            return {
-                "analyst_consensus": research_sentiment.get("consensus_metrics", {}),
-                "rating_changes": research_sentiment.get("rating_shifts", []),
-                "price_target_moves": research_sentiment.get("target_adjustments", []),
-                "research_volume": research_sentiment.get("publication_stats", {}),
-                "institution_breakdown": research_sentiment.get("institution_analysis", {}),
-                "sentiment_momentum": research_sentiment.get("sentiment_trends", {})
-            }
-
-        except Exception as e:
-            return {
-                "error": f"研报情感追踪失败: {str(e)}",
-                "analyst_consensus": {"rating": "neutral", "confidence": 0.5},
-                "rating_changes": []
-            }
-
-    async def _collect_market_fundamentals(self, request: AnalysisRequestVO, client: LLMClient) -> Dict[str, Any]:
-        """收集市场基本面数据"""
-        system = (
-            "你是Bloomberg Terminal的基本面分析师。基于给定信息，"
-            "评估市场基本面状况：估值水平、盈利预期、成长前景、分红收益。"
-            "返回JSON格式：valuation_metrics, earnings_outlook, growth_prospects, dividend_analysis")
-
-        user = (
-            f"分析标的: {', '.join(request.symbols)}\n"
-            f"事件: {request.topic}\n"
-            f"内容: {request.content[:1200]}\n"
-            f"区域: {request.region or 'Global'}\n"
-            "评估基本面投资价值"
-        )
-
-        try:
-            return await client.structured_json(system, user, temperature=0.1)
-        except Exception:
-            return {
-                "valuation_metrics": {
-                    "pe_ratio": "N/A",
-                    "pb_ratio": "N/A",
-                    "assessment": "数据不足"},
-                "earnings_outlook": {
-                    "direction": "neutral",
-                    "confidence": "low"},
-                "growth_prospects": {
-                    "short_term": "stable",
-                    "long_term": "uncertain"},
-                "dividend_analysis": {
-                    "yield": "N/A",
-                    "sustainability": "unknown"}}
-
-    async def _collect_technical_indicators(self, request: AnalysisRequestVO, client: LLMClient) -> Dict[str, Any]:
-        """收集技术指标数据"""
-        system = (
-            "你是专业技术分析师。基于事件信息，评估技术面状况："
-            "趋势方向、动量指标、支撑阻力、交易信号。"
-            "返回JSON：trend_analysis, momentum_indicators, support_resistance, trading_signals"
-        )
-
-        user = (
-            f"标的: {', '.join(request.symbols)}\n"
-            f"时间框架: {request.time_horizon}\n"
-            f"市场事件: {request.topic}\n"
-            f"事件影响: {request.content[:800]}\n"
-            "分析技术面指标和交易信号"
-        )
-
-        try:
-            return await client.structured_json(system, user, temperature=0.1)
-        except Exception:
-            return {
-                "trend_analysis": {
-                    "direction": "neutral",
-                    "strength": "weak"},
-                "momentum_indicators": {
-                    "rsi": "N/A",
-                    "macd": "neutral"},
-                "support_resistance": {
-                    "support": "unknown",
-                    "resistance": "unknown"},
-                "trading_signals": ["数据不足，建议谨慎"]}
-
-    async def _assess_market_microstructure(self, request: AnalysisRequestVO, client: LLMClient) -> Dict[str, Any]:
-        """评估市场微观结构"""
-        system = (
-            "你是市场微观结构专家。评估：订单流分析、买卖盘强度、"
-            "流动性状况、市场深度、异常交易模式。"
-            "返回JSON：order_flow, bid_ask_strength, liquidity_assessment, market_depth, unusual_patterns"
-        )
-
-        user = (
-            f"标的: {', '.join(request.symbols)}\n"
-            f"事件: {request.topic}\n"
-            f"区域: {request.region}\n"
-            "评估市场微观结构和交易行为"
-        )
-
-        try:
-            return await client.structured_json(system, user, temperature=0.1)
-        except Exception:
-            return {
-                "order_flow": {"net_flow": "balanced", "institutional_activity": "normal"},
-                "bid_ask_strength": {"bid_strength": "medium", "ask_strength": "medium"},
-                "liquidity_assessment": {"overall": "adequate", "depth": "normal"},
-                "market_depth": {"buy_side": "sufficient", "sell_side": "sufficient"},
-                "unusual_patterns": []
-            }
-
-    async def _fuse_multi_source_data(self, market_fundamentals: Dict, technical_indicators: Dict,
-                                      market_microstructure: Dict, comprehensive_sentiment: Dict,
-                                      news_flow_impact: Dict, social_media_buzz: Dict,
+    async def _fuse_multi_source_data(self, stock_data: Dict,
+                                      comprehensive_sentiment: Dict,
+                                      news_flow_impact: Dict,
+                                      social_media_buzz: Dict,
                                       research_sentiment: Dict, client: LLMClient) -> Dict[str, Any]:
         """多源数据融合分析"""
         system = (
-            "你是数据融合专家。整合基本面、技术面、微观结构和舆情数据，"
+            "你是数据融合专家。整合来自Stock Agent的结构化金融数据和来自舆情系统的数据，"
             "识别数据间的一致性和分歧，形成综合判断。"
             "返回JSON：data_consistency, key_signals, conflicting_indicators, confidence_assessment"
         )
 
         # 构建简化的数据摘要用于LLM分析
         data_summary = {
-            "fundamentals": {k: str(v)[:100] for k, v in market_fundamentals.items()},
-            "technical": {k: str(v)[:100] for k, v in technical_indicators.items()},
-            "microstructure": {k: str(v)[:100] for k, v in market_microstructure.items()},
+            "stock_data": {
+                "market_context": str(stock_data.get("data", {}).get("market_context", {}))[:400],
+                "comparative_analysis": str(stock_data.get("data", {}).get("comparative_analysis", {}))[:400],
+                "sector_analysis": str(stock_data.get("data", {}).get("sector_analysis", {}))[:400]
+            },
             "sentiment": {
                 "overall": comprehensive_sentiment.get("overall_sentiment", {}),
-                "news_impact": news_flow_impact.get("impact_score", {}),
-                "social_buzz": social_media_buzz.get("mention_volume", {}),
-                "research": research_sentiment.get("analyst_consensus", {})
+                "stock_impact": news_flow_impact.get("stock_specific_analysis", {}),
+                "hotspots": social_media_buzz.get("market_hotspots", [])[:3],
+                "entities": research_sentiment.get("entity_summary", {})
             }
         }
 
@@ -585,14 +390,12 @@ class EnhancedDataIntelligenceSpecialist(BaseAgent):
 
             # 添加原始数据引用
             fusion_result["raw_data_sources"] = {
-                "market_fundamentals": market_fundamentals,
-                "technical_indicators": technical_indicators,
-                "market_microstructure": market_microstructure,
+                "stock_agent_data": stock_data,
                 "sentiment_analysis": {
                     "comprehensive": comprehensive_sentiment,
-                    "news_flow": news_flow_impact,
-                    "social_media": social_media_buzz,
-                    "research": research_sentiment
+                    "stock_impact": news_flow_impact,
+                    "hotspots": social_media_buzz,
+                    "entities": research_sentiment
                 }
             }
 
@@ -723,15 +526,15 @@ class EnhancedDataIntelligenceSpecialist(BaseAgent):
         data_sources_reliability = {
             "sentiment_api": comprehensive_sentiment.get("data_quality", 0.7),
             "market_data": 0.85,  # 基于历史表现的估计
-            "technical_analysis": 0.75,
-            "microstructure": 0.8,
+            "technical_analysis": 0.75, # Note: This data is now part of stock_data
+            "microstructure": 0.8, # Note: This data is now part of stock_data
             "data_fusion": fusion_result.get("confidence_assessment", 0.6)
         }
 
         return DataIntelligenceReport(
             market_snapshot=market_snapshot,
             sentiment_indicators=sentiment_indicators,
-            key_financial_metrics=key_financial_metrics,
+            key_financial_metrics=self._extract_key_financials_from_stock_data(fusion_result),
             market_anomalies=market_anomalies,
             data_quality_score=data_quality_score,
             data_sources_reliability=data_sources_reliability,
@@ -779,6 +582,28 @@ class EnhancedDataIntelligenceSpecialist(BaseAgent):
             "long": "30d"
         }
         return mapping.get(time_horizon, "24h")
+
+    def _extract_key_financials_from_stock_data(self, fusion_result: Dict) -> Dict:
+        """从融合结果中提取关键财务指标"""
+        try:
+            stock_data = fusion_result.get("raw_data_sources", {}).get("stock_agent_data", {})
+            market_context = stock_data.get("data", {}).get("market_context", {})
+
+            if not market_context or not market_context.get("data"):
+                return {}
+
+            # 以第一只股票为代表
+            first_symbol = list(market_context["data"].keys())[0]
+            first_stock_data = market_context["data"][first_symbol]
+
+            return {
+                "valuation_assessment": first_stock_data.get("valuation", {}),
+                "trading_info": first_stock_data.get("trading", {}),
+                "ownership_summary": first_stock_data.get("ownership", {})
+            }
+        except (KeyError, IndexError):
+            return {"error": "无法从Stock Agent数据中提取关键财务指标"}
+
 
     async def close(self):
         """清理资源"""

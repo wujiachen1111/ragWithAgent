@@ -7,6 +7,8 @@ from typing import Dict, List, Optional
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
+from ..exceptions import LLMServiceException, NetworkException
+
 
 class LLMClient:
     """简单的 LLM 网关客户端，返回结构化 JSON。"""
