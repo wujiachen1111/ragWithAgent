@@ -68,6 +68,13 @@ class DatabaseManager:
             raise RuntimeError("数据库未连接")
         return self._db.stocks
     
+    @property
+    def tasks_collection(self):
+        """获取任务集合"""
+        if self._db is None:
+            raise RuntimeError("数据库未连接")
+        return self._db.tasks
+    
     def __enter__(self):
         self.connect()
         return self

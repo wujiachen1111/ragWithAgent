@@ -6,8 +6,9 @@ from typing import List, Optional
 from fastapi import APIRouter, Query, HTTPException, Depends
 from datetime import datetime
 
-from ..models.base import StockQuery, BatchProcessResult
+from ..models.base import StockQuery, BatchProcessResult, RefreshTask
 from ..services.stock_service import StockService
+from ..services.scheduler import StockRefreshScheduler
 from ..core.database import db_manager
 
 router = APIRouter(prefix="/api/v1/stocks", tags=["股票数据"])
@@ -15,6 +16,19 @@ router = APIRouter(prefix="/api/v1/stocks", tags=["股票数据"])
 # 依赖注入
 def get_stock_service() -> StockService:
     return StockService()
+
+def get_scheduler() -> StockRefreshScheduler:
+    """获取调度器实例"""
+    # 导入全局调度器实例
+    import sys
+    main_module = sys.modules.get('main')
+    if main_module and hasattr(main_module, 'scheduler') and main_module.scheduler:
+        return main_module.scheduler
+    
+    # 如果全局实例不可用，创建临时实例
+    from ..models.base import SchedulerConfig
+    config = SchedulerConfig()
+    return StockRefreshScheduler(config)
 
 
 @router.get("/", summary="查询股票列表")
@@ -302,4 +316,147 @@ async def health_check():
             "timestamp": datetime.now(),
             "message": "Stock Agent 服务异常"
         }
+
+
+# ==================== 数据刷新相关API ====================
+
+@router.post("/refresh/single/{stock_code}", summary="刷新单只股票数据")
+async def refresh_single_stock(
+    stock_code: str,
+    scheduler: StockRefreshScheduler = Depends(get_scheduler)
+):
+    """
+    刷新指定股票的数据
+    """
+    try:
+        # 确保数据库连接
+        if not db_manager.client:
+            db_manager.connect()
+        
+        # 执行单只股票刷新
+        task = await scheduler.refresh_single_stock(stock_code)
+        
+        return {
+            "success": True,
+            "data": {
+                "task_id": task.task_id,
+                "stock_code": stock_code,
+                "status": task.status,
+                "start_time": task.start_time,
+                "result": task.result.model_dump() if task.result else None
+            },
+            "message": f"股票 {stock_code} 刷新任务已完成"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"刷新股票 {stock_code} 失败: {str(e)}")
+
+
+@router.post("/refresh/global", summary="触发全局股票数据刷新")
+async def trigger_global_refresh(
+    scheduler: StockRefreshScheduler = Depends(get_scheduler)
+):
+    """
+    手动触发全局股票数据刷新
+    """
+    try:
+        # 确保数据库连接
+        if not db_manager.client:
+            db_manager.connect()
+        
+        # 创建异步任务执行全局刷新
+        import asyncio
+        task_id = f"manual_global_refresh_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        # 在后台执行全局刷新
+        asyncio.create_task(scheduler._execute_global_refresh())
+        
+        return {
+            "success": True,
+            "data": {
+                "task_id": task_id,
+                "status": "started",
+                "message": "全局刷新任务已启动，正在后台执行"
+            },
+            "message": "全局股票数据刷新任务已启动"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"触发全局刷新失败: {str(e)}")
+
+
+@router.get("/refresh/tasks", summary="获取刷新任务列表")
+async def get_refresh_tasks(
+    limit: int = Query(10, description="返回任务数量"),
+    scheduler: StockRefreshScheduler = Depends(get_scheduler)
+):
+    """
+    获取最近的刷新任务列表
+    """
+    try:
+        # 确保数据库连接
+        if not db_manager.client:
+            db_manager.connect()
+        
+        tasks = await scheduler.get_recent_tasks(limit)
+        
+        return {
+            "success": True,
+            "data": [task.model_dump() for task in tasks],
+            "total": len(tasks),
+            "message": f"获取到 {len(tasks)} 个刷新任务"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取刷新任务失败: {str(e)}")
+
+
+@router.get("/refresh/tasks/{task_id}", summary="获取刷新任务状态")
+async def get_refresh_task_status(
+    task_id: str,
+    scheduler: StockRefreshScheduler = Depends(get_scheduler)
+):
+    """
+    获取指定刷新任务的状态
+    """
+    try:
+        # 确保数据库连接
+        if not db_manager.client:
+            db_manager.connect()
+        
+        task = await scheduler.get_task_status(task_id)
+        
+        if not task:
+            raise HTTPException(status_code=404, detail=f"未找到任务 {task_id}")
+        
+        return {
+            "success": True,
+            "data": task.model_dump(),
+            "message": f"任务 {task_id} 状态获取成功"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取任务状态失败: {str(e)}")
+
+
+@router.get("/scheduler/status", summary="获取调度器状态")
+async def get_scheduler_status(
+    scheduler: StockRefreshScheduler = Depends(get_scheduler)
+):
+    """
+    获取调度器运行状态和配置信息
+    """
+    try:
+        status = scheduler.get_scheduler_status()
+        
+        return {
+            "success": True,
+            "data": status,
+            "message": "调度器状态获取成功"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取调度器状态失败: {str(e)}")
 

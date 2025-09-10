@@ -13,11 +13,17 @@ from stock.core.database import db_manager
 from stock.core.logging import logger
 from stock.api.stock_api import router as stock_router
 from stock.api.rag_api import router as rag_router
+from stock.services.scheduler import StockRefreshScheduler
+from stock.models.base import SchedulerConfig
 
+# 全局调度器实例
+scheduler = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
+    global scheduler
+    
     # 启动时
     logger.info("🚀 Stock Agent 服务启动中...")
     
@@ -27,12 +33,31 @@ async def lifespan(app: FastAPI):
     else:
         logger.error("❌ 数据库连接失败")
     
+    # 启动调度器
+    try:
+        scheduler_config = SchedulerConfig()
+        scheduler = StockRefreshScheduler(scheduler_config)
+        await scheduler.start()
+        logger.info("✅ 股票刷新调度器启动成功")
+    except Exception as e:
+        logger.error(f"❌ 调度器启动失败: {e}")
+        scheduler = None
+    
     logger.info(f"✅ Stock Agent 服务已启动 - {settings.api.host}:{settings.api.port}")
     
     yield
     
     # 关闭时
     logger.info("🛑 Stock Agent 服务关闭中...")
+    
+    # 停止调度器
+    if scheduler:
+        try:
+            await scheduler.stop()
+            logger.info("✅ 调度器已停止")
+        except Exception as e:
+            logger.error(f"❌ 调度器停止失败: {e}")
+    
     db_manager.disconnect()
     logger.info("✅ Stock Agent 服务已关闭")
 

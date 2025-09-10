@@ -21,10 +21,30 @@ class DatabaseConfig(BaseModel):
     uri: str = "mongodb://localhost:27017/"
     database: str = "stock_data"
     timeout: int = 5000
+    
+    def get_connection_uri(self) -> str:
+        """获取连接URI"""
+        if self.database not in self.uri:
+            # 如果URI中没有指定数据库，则添加
+            if self.uri.endswith('/'):
+                return f"{self.uri}{self.database}"
+            else:
+                return f"{self.uri}/{self.database}"
+        return self.uri
+    
+    def get_connection_info(self) -> dict:
+        """获取连接信息（隐藏敏感信息）"""
+        return {
+            "host": "localhost",
+            "port": 27017,
+            "database": self.database,
+            "auth_mode": "无认证"
+        }
 
 class DataFetcherConfig(BaseModel):
     """数据获取器配置"""
-    timeout: float = 30.0
+    request_timeout: float = 30.0
+    request_delay: float = 0.1
     max_retries: int = 3
     user_agent: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3"
 
@@ -47,7 +67,7 @@ class SystemConfig(BaseSettings):
     # 组件配置
     api: ApiConfig = Field(default_factory=ApiConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
-    fetcher: DataFetcherConfig = Field(default_factory=DataFetcherConfig)
+    data: DataFetcherConfig = Field(default_factory=DataFetcherConfig)
 
 # 全局配置实例
 settings = SystemConfig()
