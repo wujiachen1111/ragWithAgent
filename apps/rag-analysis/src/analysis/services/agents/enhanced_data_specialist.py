@@ -18,7 +18,8 @@ from ..yuqing_adapter import YuQingNewsAdapter, YuQingConfig
 from ...models.agents import AnalysisRequestVO
 from ...models.enhanced_agents import DataIntelligenceReport
 # 新增导入 stock_adapter
-from ....services.stock_client import stock_adapter
+# 注意：避免相对导入越过顶层包，使用基于 PYTHONPATH 的绝对导入
+from services.stock_client import stock_adapter
 
 
 class EnhancedDataIntelligenceSpecialist(BaseAgent):
@@ -126,8 +127,6 @@ class EnhancedDataIntelligenceSpecialist(BaseAgent):
         try:
             # 提取关键词
             keywords = [request.topic]
-            if request.headline:
-                keywords.append(request.headline)
 
             # 从内容中提取关键词
             extracted_keywords = await self._extract_keywords_from_content(request.content)
@@ -313,8 +312,6 @@ class EnhancedDataIntelligenceSpecialist(BaseAgent):
         try:
             # 构建查询参数
             keywords = [request.topic]
-            if request.headline:
-                keywords.append(request.headline)
 
             extracted_keywords = await self._extract_keywords_from_content(request.content)
             keywords.extend(extracted_keywords[:3])

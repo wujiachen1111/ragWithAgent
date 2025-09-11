@@ -7,6 +7,14 @@ import pytest
 import asyncio
 from typing import Dict, Any
 from unittest.mock import AsyncMock, MagicMock
+import sys
+from pathlib import Path
+
+# Ensure apps/rag-analysis/src is importable when running tests from repo root
+_tests_dir = Path(__file__).resolve().parent
+_src_dir = _tests_dir.parent / "src"
+if str(_src_dir) not in sys.path:
+    sys.path.insert(0, str(_src_dir))
 
 from analysis.models.agents import AnalysisRequestVO, TimeHorizon, RiskAppetite
 from analysis.services.llm_client import LLMClient
@@ -82,4 +90,3 @@ def mock_stock_data():
             }
         }
     }
-

@@ -24,12 +24,11 @@ from datetime import datetime
 import pickle
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, roc_auc_score
 
-# 添加项目路径
+# 添加项目路径（运行时使用），并使用包路径供IDE静态分析
 project_root = Path(__file__).parent.parent.parent.parent
-sys.path.append(str(project_root / "services" / "decision_engine"))
 
-from contrastive_learning_samples import A_STOCK_CONTRASTIVE_SAMPLES, SentimentLabel
-from contrastive_rag_enhancer import ContrastiveEmbeddingModel, ContrastiveTrainingConfig
+from services.decision_engine.contrastive_learning_samples import A_STOCK_CONTRASTIVE_SAMPLES, SentimentLabel
+from services.decision_engine.contrastive_rag_enhancer import ContrastiveEmbeddingModel, ContrastiveTrainingConfig
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -119,7 +118,14 @@ class ContrastiveTrainer:
         with open(config_path, 'r', encoding='utf-8') as f:
             self.config = yaml.safe_load(f)
             
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        # 自动选择最优设备 (CUDA > MPS > CPU)
+        if torch.cuda.is_available():
+            self.device = torch.device('cuda')
+        elif torch.backends.mps.is_available():
+            self.device = torch.device('mps')
+        else:
+            self.device = torch.device('cpu')
+            
         logger.info(f"使用设备: {self.device}")
         
         # 初始化模型
@@ -193,7 +199,7 @@ class ContrastiveTrainer:
             train_dataset,
             batch_size=self.config['training']['batch_size'],
             shuffle=True,
-            num_workers=4,
+            num_workers=self.config['data'].get('num_workers', 4),
             pin_memory=True if self.device.type == 'cuda' else False
         )
         
@@ -201,7 +207,7 @@ class ContrastiveTrainer:
             val_dataset,
             batch_size=self.config['training']['batch_size'],
             shuffle=False,
-            num_workers=4,
+            num_workers=self.config['data'].get('num_workers', 4),
             pin_memory=True if self.device.type == 'cuda' else False
         )
         
@@ -480,7 +486,7 @@ class ContrastiveTrainer:
         self.plot_training_history()
         
         # 保存训练记录
-        history_path = self.log_dir / 'training_history.json'
+        history_path = self.log_dir/ 'training_history.json'
         with open(history_path, 'w', encoding='utf-8') as f:
             json.dump(self.training_history, f, ensure_ascii=False, indent=2)
         logger.info(f"训练记录保存到: {history_path}")

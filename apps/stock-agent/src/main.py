@@ -2,11 +2,20 @@
 Stock Agent 服务入口
 """
 
+from __future__ import annotations
+
 import os
+import sys
+from pathlib import Path
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+
+# 确保本服务的 src 目录优先，避免与项目根级同名包冲突
+_SRC_DIR = Path(__file__).resolve().parent
+if str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
 
 from stock.core.config import settings
 from stock.core.database import db_manager

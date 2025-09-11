@@ -195,7 +195,7 @@ class AnalysisGraph:
         # 构建增强版发现用于风险评估
         enhanced_findings = None
         if findings:
-            from ...models.enhanced_agents import EnhancedAgentFindings
+            from ..models.enhanced_agents import EnhancedAgentFindings
             enhanced_findings = EnhancedAgentFindings(
                 narrative=findings.narrative,
                 quant=findings.quant,
@@ -208,8 +208,17 @@ class AnalysisGraph:
         # 独立风险评估
         risk_assessment = await self.risk_controller.analyze(request, enhanced_findings)
 
+        full = risk_assessment.dict()
+        # 精简摘要用于 EnhancedAgentFindings 的宽松映射
+        risk_summary = {
+            "overall_risk_score": full.get("overall_risk_score", 0.5),
+            "risk_factors": full.get("risk_control_recommendations", []),
+            "risk_limits_breach_alerts": full.get("risk_limits_breach_alerts", []),
+        }
+
         return {
-            "risk_assessment": risk_assessment.dict(),
+            "risk_assessment": full,
+            "risk_summary": risk_summary,
             "workflow_stage": "risk_assessment_completed"
         }
 
@@ -296,7 +305,8 @@ class AnalysisGraph:
         market_regime = strategic_outlook.get("market_regime", "neutral")
 
         # 简化的匹配度计算
-        decision_action = decision.action
+        # Normalize enum to string label
+        decision_action = getattr(decision.action, "value", decision.action)
 
         alignment_matrix = {
             ("strong_buy", "bull_market"): 0.9,
@@ -310,6 +320,7 @@ class AnalysisGraph:
 
     async def run(self, request: AnalysisRequestVO) -> AnalysisResponseVO:
         """运行增强版多智能体分析工作流"""
+        start_ts = datetime.now()
         initial_state: GraphState = {
             "request": request,
             "iter": 0,
@@ -320,7 +331,7 @@ class AnalysisGraph:
         final_state: GraphState = await self.graph.ainvoke(initial_state)
 
         # 构建增强版响应
-        from ...models.enhanced_agents import (
+        from ..models.enhanced_agents import (
             EnhancedAnalysisResponseVO,
             EnhancedAgentFindings,
             InvestmentCommitteeMinutes
@@ -335,7 +346,7 @@ class AnalysisGraph:
                 contrarian=final_state["findings"].contrarian,
                 second_order=final_state["findings"].second_order,
                 data_intelligence=final_state.get("data_intelligence_report"),
-                risk_control=final_state.get("risk_assessment"),
+                risk_control=final_state.get("risk_summary"),
                 macro_strategic=final_state.get("macro_view")
             )
 
@@ -364,10 +375,7 @@ class AnalysisGraph:
             enhanced_findings=enhanced_findings,
             enhanced_decision=final_state.get("enhanced_decision"),
             committee_minutes=committee_minutes,
-            analysis_duration_seconds=(
-                datetime.now() -
-                datetime.now()).total_seconds(),
-            # 实际应该记录开始时间
+            analysis_duration_seconds=(datetime.now() - start_ts).total_seconds(),
             data_quality_score=final_state.get(
                 "data_intelligence_report",
                 {}).get("data_quality_score"),

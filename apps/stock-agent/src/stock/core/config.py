@@ -54,7 +54,7 @@ class SystemConfig(BaseSettings):
         env_file=os.path.join(ROOT_DIR, ".env"),
         env_file_encoding='utf-8',
         env_nested_delimiter='__',
-        env_prefix='STOCK_'  # 添加前缀以避免与其他服务的环境变量冲突
+        env_prefix='STOCK_',  # 启用前缀以兼容环境变量名 STOCK_API__PORT 等
     )
 
     # 基础配置

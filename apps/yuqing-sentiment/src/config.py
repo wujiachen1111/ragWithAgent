@@ -29,9 +29,9 @@ class AppSettings(BaseModel):
     """应用配置"""
     app_name: str = "YuQing舆情分析系统"
     app_version: str = "2.0.0"
-    debug: bool = True
+    debug: bool = False
     log_level: str = "INFO"
-    api_keys_file: str = str(ROOT_DIR / "config" / "api_keys.txt")
+    api_keys_file: str = str(ROOT_DIR / "configs" / "api_keys.txt")
 
 
 class Settings(BaseSettings):

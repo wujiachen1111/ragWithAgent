@@ -38,44 +38,58 @@ python src/main.py
 4. **访问API文档**
 浏览器打开: http://localhost:8000/docs
 
-## 📊 核心API接口
+## 📊 核心API接口（对齐现有数据模型）
 
 ### 🏆 综合数据API（推荐）
-获取已分析新闻的完整数据（新闻内容+情感分析+实体识别）
+获取已分析新闻的完整数据（新闻 + 可用的情感分析 + 可选实体）
 ```bash
-GET /api/news/comprehensive?hours=24&limit=10&include_entities=true
+GET /api/v1/news/comprehensive?hours=24&limit=10&include_entities=true
 ```
+字段说明：
+- NewsItem: `id, title, source, url, published_at, content`
+- StockAnalysis: `id, news_id, stock_code, sentiment, confidence, analysis_summary`
+  - 文档中旧字段（sentiment_label, confidence_score, market_impact_level, analysis_result）已收敛为上述字段
+  - 输出为 `{ sentiment, confidence, summary }`
 
 ### 📰 新闻API
 ```bash
-# 获取新闻列表
-GET /api/news/?limit=20
+# 获取新闻列表（分页）
+GET /api/v1/news/?limit=20
 
 # 获取单条新闻详情
-GET /api/news/{news_id}
+GET /api/v1/news/{news_id}
 
 # 获取系统统计
-GET /api/news/stats
+GET /api/v1/news/stats
 
 # 财联社专用API
-GET /api/news/cailian/latest
-POST /api/news/cailian/fetch
-GET /api/news/cailian/search?q=关键词
+GET /api/v1/news/cailian/latest
+POST /api/v1/news/cailian/fetch
+GET /api/v1/news/cailian/search?q=关键词
+
+# 获取最近新闻（纯数组）
+GET /api/v1/news/recent?limit=5
+
+# 初始化数据库（最小字段写入）
+POST /api/v1/news/seed/cailian?limit=50
+
+# 离线写入示例新闻（无外网/无 akshare）
+POST /api/v1/news/seed/sample?count=5
 ```
 
 ### 🧠 分析API
 ```bash
 # 情感分析统计
-GET /api/analysis/stats/sentiment?hours=24
+GET /api/v1/analysis/stats/sentiment?hours=24
 
 # 热门关键词
-GET /api/analysis/keywords/trending?limit=20
+GET /api/v1/analysis/keywords/trending?limit=20
 
 # 智能热点发现
-GET /api/analysis/hotspots/discover?limit=10
+GET /api/v1/analysis/hotspots/discover?limit=10
 
 # 手动触发分析
-POST /api/analysis/analyze/recent
+POST /api/v1/analysis/analyze/recent
 ```
 
 ### 🎯 实体分析API

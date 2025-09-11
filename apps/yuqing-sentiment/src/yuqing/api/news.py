@@ -5,7 +5,7 @@ from typing import List, Optional
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import select, desc, and_, or_
+from sqlalchemy import select, desc, and_, or_, func
 
 from yuqing.core.database import get_db
 from yuqing.models.database_models import NewsItem, StockAnalysis, MentionedCompany, MentionedPerson, IndustryImpact, KeyEvent
@@ -13,6 +13,58 @@ from yuqing.core.logging import logger
 from yuqing.services.cailian_news_service import cailian_news_service
 
 router = APIRouter()
+
+@router.get("/recent", summary="获取最近新闻（纯数组）")
+async def get_recent_news(
+    limit: int = Query(5, ge=1, le=100, description="返回数量"),
+    db: Session = Depends(get_db)
+):
+    """返回最近的新闻数组，用于简单场景/健康验证。
+
+    响应为 JSON 数组，而非带分页的对象。
+    """
+    try:
+        # 依据现有模型字段排序（published_at），避免访问不存在的列
+        q = (
+            select(NewsItem)
+            .order_by(desc(NewsItem.published_at))
+            .limit(limit)
+        )
+        items = db.execute(q).scalars().all()
+        if items:
+            return [
+                {
+                    "id": it.id,
+                    "title": it.title,
+                    "content": (it.content or "")[:200],
+                    "source": it.source,
+                    "url": getattr(it, "url", None),
+                    "published_at": getattr(it, "published_at", None),
+                }
+                for it in items
+            ]
+
+        # 数据库没有内容时，回退到实时源（不落库），确保接口可用
+        try:
+            from yuqing.services.cailian_news_service import cailian_news_service
+            latest = await cailian_news_service.get_latest_news(days=1, limit=limit)
+            return [
+                {
+                    "id": n.get("id"),
+                    "title": n.get("title"),
+                    "content": (n.get("content") or "")[:200],
+                    "source": n.get("source"),
+                    "url": n.get("source_url"),
+                    "published_at": n.get("published_at"),
+                }
+                for n in latest
+            ]
+        except Exception:
+            return []
+    except Exception as e:
+        logger.error(f"获取最近新闻失败: {e}")
+        # 保持接口契约：返回数组
+        return []
 
 @router.get("/", summary="获取新闻列表")
 async def get_news_list(
@@ -31,7 +83,7 @@ async def get_news_list(
         # 时间过滤
         if hours:
             cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
-            query = query.where(NewsItem.collected_at >= cutoff_time)
+            query = query.where(NewsItem.published_at >= cutoff_time)
         
         # 来源过滤
         if source:
@@ -47,7 +99,7 @@ async def get_news_list(
             )
         
         # 排序和分页
-        query = query.order_by(desc(NewsItem.collected_at))
+        query = query.order_by(desc(NewsItem.published_at))
         offset = (page - 1) * limit
         query = query.offset(offset).limit(limit)
         
@@ -55,22 +107,17 @@ async def get_news_list(
         news_items = result.scalars().all()
         
         # 获取总数
-        count_query = select(NewsItem)
+        count_query = select(func.count()).select_from(NewsItem)
         if hours:
             cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
-            count_query = count_query.where(NewsItem.collected_at >= cutoff_time)
+            count_query = count_query.where(NewsItem.published_at >= cutoff_time)
         if source:
             count_query = count_query.where(NewsItem.source.like(f"%{source}%"))
         if keyword:
             count_query = count_query.where(
-                or_(
-                    NewsItem.title.like(f"%{keyword}%"),
-                    NewsItem.content.like(f"%{keyword}%")
-                )
+                or_(NewsItem.title.like(f"%{keyword}%"), NewsItem.content.like(f"%{keyword}%"))
             )
-        
-        total_result = db.execute(count_query)
-        total = len(total_result.scalars().all())
+        total = db.execute(count_query).scalar_one() or 0
         
         return {
             "data": [
@@ -79,11 +126,8 @@ async def get_news_list(
                     "title": item.title,
                     "content": item.content[:200] + "..." if len(item.content or "") > 200 else item.content,
                     "source": item.source,
-                    "source_url": item.source_url,
-                    "published_at": item.published_at,
-                    "collected_at": item.collected_at,
-                    "language": item.language,
-                    "region": item.region
+                    "url": item.url,
+                    "published_at": item.published_at
                 }
                 for item in news_items
             ],
@@ -112,7 +156,7 @@ async def get_news_stats(
         # 基础查询
         base_query = select(NewsItem)
         if cutoff_time:
-            base_query = base_query.where(NewsItem.collected_at >= cutoff_time)
+            base_query = base_query.where(NewsItem.published_at >= cutoff_time)
         
         all_news = db.execute(base_query).scalars().all()
         
@@ -135,7 +179,7 @@ async def get_news_stats(
         
         # 最近24小时统计
         recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
-        recent_query = select(NewsItem).where(NewsItem.collected_at >= recent_cutoff)
+        recent_query = select(NewsItem).where(NewsItem.published_at >= recent_cutoff)
         recent_news = db.execute(recent_query).scalars().all()
         recent_24h = len(recent_news)
         
@@ -152,6 +196,102 @@ async def get_news_stats(
         logger.error(f"获取新闻统计失败: {e}")
         raise HTTPException(status_code=500, detail="获取新闻统计失败")
 
+
+@router.post("/seed/cailian", summary="从财联社抓取并写入最小字段", tags=["数据采集"])
+async def seed_cailian(
+    limit: int = Query(50, ge=1, le=200, description="抓取数量"),
+    db: Session = Depends(get_db)
+):
+    """抓取财联社最新新闻，并以最小字段写入数据库。
+
+    仅写入 NewsItem 现有字段：title, source, url, published_at, content。
+    忽略 cailian 原始结构中的其他字段，避免与模型不一致。
+    """
+    try:
+        latest = await cailian_news_service.get_latest_news(days=1, limit=limit)
+        if not latest:
+            return {"success": True, "inserted": 0}
+
+        inserted = 0
+        for n in latest:
+            try:
+                # 去重依据 url+title
+                url = n.get("source_url")
+                title = n.get("title")
+                exists_q = select(NewsItem).where(
+                    and_(
+                        NewsItem.title == title,
+                        NewsItem.url == url,
+                    )
+                )
+                if db.execute(exists_q).scalars().first():
+                    continue
+
+                published_at = n.get("published_at")
+                try:
+                    from datetime import datetime
+                    if isinstance(published_at, str):
+                        # 兼容 ISO 字符串
+                        published_dt = datetime.fromisoformat(published_at.replace('Z', '+00:00'))
+                    else:
+                        published_dt = published_at
+                except Exception:
+                    published_dt = None
+
+                news = NewsItem(
+                    title=title,
+                    source=n.get("source"),
+                    url=url,
+                    published_at=published_dt,
+                    content=n.get("content"),
+                )
+                db.add(news)
+                inserted += 1
+            except Exception as ie:
+                logger.warning(f"跳过一条插入错误: {ie}")
+                continue
+
+        db.commit()
+        return {"success": True, "inserted": inserted}
+    except Exception as e:
+        logger.error(f"seed 失败: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail="seed 失败")
+
+
+@router.post("/seed/sample", summary="写入示例新闻（离线环境用）", tags=["数据采集"])
+async def seed_sample(
+    count: int = Query(5, ge=1, le=20, description="写入条数"),
+    db: Session = Depends(get_db)
+):
+    """在没有外网/akshare 的情况下，快速写入若干示例新闻以便联调。"""
+    try:
+        from datetime import datetime, timezone
+        inserted = 0
+        now = datetime.now(timezone.utc)
+        for i in range(count):
+            title = f"示例新闻 {i+1}"
+            url = f"https://example.com/news/{i+1}"
+            # 去重
+            exists = db.execute(select(NewsItem).where(and_(NewsItem.title == title, NewsItem.url == url))).scalars().first()
+            if exists:
+                continue
+            news = NewsItem(
+                title=title,
+                source="sample",
+                url=url,
+                published_at=now,
+                content=f"这是一条用于本地联调的示例新闻内容（#{i+1}）。",
+            )
+            db.add(news)
+            inserted += 1
+        db.commit()
+        return {"success": True, "inserted": inserted}
+    except Exception as e:
+        logger.error(f"seed sample 失败: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail="seed sample 失败")
+
 @router.get("/comprehensive", summary="获取已分析新闻的完整数据")
 async def get_comprehensive_news(
     hours: int = Query(6, description="时间范围(小时)"),
@@ -165,17 +305,14 @@ async def get_comprehensive_news(
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
         
         # 查询已分析的新闻（有情感分析结果的）
-        query = select(
-            NewsItem,
-            StockAnalysis
-        ).join(
-            StockAnalysis, NewsItem.id == StockAnalysis.news_id
-        ).where(
-            and_(
-                NewsItem.collected_at >= cutoff_time,
-                StockAnalysis.sentiment_label.isnot(None)  # 确保有分析结果
-            )
-        ).order_by(desc(NewsItem.collected_at)).limit(limit)
+        query = (
+            select(NewsItem, StockAnalysis)
+            .select_from(NewsItem)
+            .join(StockAnalysis, NewsItem.id == StockAnalysis.news_id, isouter=True)
+            .where(NewsItem.published_at >= cutoff_time)
+            .order_by(desc(NewsItem.published_at))
+            .limit(limit)
+        )
         
         result = db.execute(query)
         news_analysis_pairs = result.all()
@@ -200,11 +337,8 @@ async def get_comprehensive_news(
                 "content": news_item.content,
                 "summary": news_item.summary,
                 "source": news_item.source,
-                "source_url": news_item.source_url,
-                "published_at": news_item.published_at,
-                "collected_at": news_item.collected_at,
-                "language": news_item.language,
-                "region": news_item.region
+                "url": news_item.url,
+                "published_at": news_item.published_at
             }
             
             # 添加原始数据（可选）
@@ -212,20 +346,20 @@ async def get_comprehensive_news(
                 news_data["raw_data"] = news_item.raw_data
             
             # 添加情感分析数据
-            sentiment_analysis = {
-                "analysis_id": analysis.id,
-                "sentiment_label": analysis.sentiment_label,
-                "confidence_score": analysis.confidence_score,
-                "market_impact_level": analysis.market_impact_level,
-                "analysis_result": analysis.analysis_result,
-                "analysis_timestamp": analysis.analysis_timestamp
-            }
+            sentiment_analysis = None
+            if analysis is not None:
+                sentiment_analysis = {
+                    "analysis_id": analysis.id,
+                    "stock_code": analysis.stock_code,
+                    "sentiment": analysis.sentiment,
+                    "confidence": analysis.confidence,
+                    "summary": analysis.analysis_summary,
+                }
             
             # 构建完整数据对象
-            complete_item = {
-                "news": news_data,
-                "sentiment_analysis": sentiment_analysis
-            }
+            complete_item = {"news": news_data}
+            if sentiment_analysis:
+                complete_item["sentiment_analysis"] = sentiment_analysis
             
             # 获取实体分析数据（可选）
             if include_entities:
@@ -238,63 +372,49 @@ async def get_comprehensive_news(
                 
                 # 查询公司实体
                 companies_query = select(MentionedCompany).where(
-                    MentionedCompany.analysis_id == analysis.id
+                    MentionedCompany.news_id == news_item.id
                 )
                 companies_result = db.execute(companies_query)
                 for company in companies_result.scalars():
                     entities["companies"].append({
                         "name": company.company_name,
                         "stock_code": company.stock_code,
-                        "exchange": company.exchange,
-                        "impact_direction": company.impact_direction,
-                        "impact_magnitude": company.impact_magnitude,
-                        "confidence_level": company.confidence_level,
-                        "impact_type": company.impact_type
+                        # 仅输出现有字段
                     })
                 
                 # 查询人物实体
                 persons_query = select(MentionedPerson).where(
-                    MentionedPerson.analysis_id == analysis.id
+                    MentionedPerson.news_id == news_item.id
                 )
                 persons_result = db.execute(persons_query)
                 for person in persons_result.scalars():
                     entities["persons"].append({
                         "name": person.person_name,
-                        "position_title": person.position_title,
-                        "company_affiliation": person.company_affiliation,
-                        "influence_level": person.influence_level,
-                        "person_type": person.person_type,
-                        "market_influence_score": person.market_influence_score
+                        "title": person.title,
                     })
                 
                 # 查询行业影响
                 industries_query = select(IndustryImpact).where(
-                    IndustryImpact.analysis_id == analysis.id
+                    IndustryImpact.news_id == news_item.id
                 )
                 industries_result = db.execute(industries_query)
                 for industry in industries_result.scalars():
                     entities["industries"].append({
                         "name": industry.industry_name,
-                        "industry_code": industry.industry_code,
-                        "sub_industry": industry.sub_industry,
-                        "impact_direction": industry.impact_direction,
-                        "impact_magnitude": industry.impact_magnitude,
-                        "confidence_level": industry.confidence_level,
-                        "impact_type": industry.impact_type
+                        "impact_description": industry.impact_description,
+                        "impact_score": industry.impact_score,
                     })
                 
                 # 查询关键事件
                 events_query = select(KeyEvent).where(
-                    KeyEvent.analysis_id == analysis.id
+                    KeyEvent.news_id == news_item.id
                 )
                 events_result = db.execute(events_query)
                 for event in events_result.scalars():
                     entities["events"].append({
                         "type": event.event_type,
-                        "title": event.event_title,
                         "description": event.event_description,
-                        "market_significance": event.market_significance,
-                        "event_category": event.event_category
+                        "details": event.event_details,
                     })
                 
                 complete_item["entity_analysis"] = entities
@@ -395,7 +515,7 @@ async def get_source_stats(
     try:
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
         
-        query = select(NewsItem).where(NewsItem.collected_at >= cutoff_time)
+        query = select(NewsItem).where(NewsItem.published_at >= cutoff_time)
         result = db.execute(query)
         news_items = result.scalars().all()
         
@@ -411,15 +531,19 @@ async def get_source_stats(
                 }
             
             source_stats[source]["count"] += 1
-            source_stats[source]["regions"].add(item.region or "unknown")
+            # 模型无 region 字段，省略
             
             if (source_stats[source]["latest"] is None or 
-                item.collected_at > source_stats[source]["latest"]):
-                source_stats[source]["latest"] = item.collected_at
+                (item.published_at or datetime.min.replace(tzinfo=timezone.utc)) > source_stats[source]["latest"]):
+                source_stats[source]["latest"] = item.published_at
         
         # 转换set为list
-        for source in source_stats:
-            source_stats[source]["regions"] = list(source_stats[source]["regions"])
+        # 移除 regions 字段（模型不支持）
+        for source in list(source_stats.keys()):
+            source_stats[source] = {
+                "count": source_stats[source]["count"],
+                "latest": source_stats[source]["latest"],
+            }
         
         return {
             "timeframe_hours": hours,

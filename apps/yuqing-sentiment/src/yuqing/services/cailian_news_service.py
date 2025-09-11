@@ -209,46 +209,83 @@ class CailianNewsService:
             app_logger.error(f"保存财联社新闻到文件时出错: {e}")
     
     async def save_to_database(self, news_items: List[Dict[str, Any]]) -> int:
-        """保存新闻到数据库"""
+        """保存新闻到数据库（对齐当前 NewsItem 模型字段）。
+
+        仅写入: title, source, url, published_at, content。
+        自动主键（不写入自定义 id），以 (title,url) 做幂等去重。
+        """
         if not news_items:
             return 0
-        
+
+        from sqlalchemy import select
+        from datetime import datetime
+
         try:
             db = next(get_db())
             saved_count = 0
-            
+
             for item in news_items:
                 try:
-                    # 检查是否已存在
-                    existing = db.query(NewsItem).filter(NewsItem.id == item["id"]).first()
-                    if existing:
+                    title = item.get("title")
+                    url = item.get("source_url") or ""
+                    content = item.get("content") or ""
+
+                    # 规范化URL：若为主页/不唯一的链接，则使用内容哈希构造唯一URL
+                    try:
+                        content_hash = self._calculate_hash(content)
+                    except Exception:
+                        content_hash = None
+
+                    normalized_homepages = {
+                        "https://www.cls.cn",
+                        "https://www.cls.cn/",
+                        "http://www.cls.cn",
+                        "http://www.cls.cn/",
+                    }
+                    if (not url) or (url in normalized_homepages):
+                        suffix = content_hash or hashlib.md5((title or content).encode("utf-8")).hexdigest()
+                        url = f"https://www.cls.cn/#news-{suffix}"
+                    if not title and not url:
                         continue
-                    
-                    # 创建新闻项
-                    news_item = NewsItem(
-                        id=item["id"],
-                        title=item["title"],
-                        content=item["content"],
-                        source=item["source"],
-                        source_url=item["source_url"],
-                        published_at=datetime.fromisoformat(item["published_at"].replace('Z', '+00:00')),
-                        collected_at=datetime.fromisoformat(item["collected_at"].replace('Z', '+00:00')),
-                        language=item["language"],
-                        region=item["region"],
-                        raw_data=item["raw_data"]
+
+                    # 去重：URL唯一
+                    exists = db.execute(select(NewsItem).where(NewsItem.url == url)).scalars().first()
+                    if exists:
+                        continue
+
+                    published_at = item.get("published_at")
+                    if isinstance(published_at, str):
+                        try:
+                            published_dt = datetime.fromisoformat(published_at.replace('Z', '+00:00'))
+                        except Exception:
+                            published_dt = None
+                    else:
+                        published_dt = published_at
+
+                    news_row = NewsItem(
+                        title=title,
+                        source=item.get("source"),
+                        url=url,
+                        published_at=published_dt,
+                        content=content,
                     )
-                    
-                    db.add(news_item)
+                    db.add(news_row)
+                    # 单条提交，避免批量提交因一条失败导致整体回滚
+                    db.commit()
                     saved_count += 1
-                    
+
                 except Exception as e:
                     app_logger.error(f"保存财联社新闻项到数据库时出错: {e}")
+                    # 回滚单条事务，继续处理后续
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
                     continue
-            
-            db.commit()
+
             app_logger.info(f"财联社新闻保存到数据库: {saved_count} 条")
             return saved_count
-            
+
         except Exception as e:
             app_logger.error(f"保存财联社新闻到数据库时出错: {e}")
             if 'db' in locals():
