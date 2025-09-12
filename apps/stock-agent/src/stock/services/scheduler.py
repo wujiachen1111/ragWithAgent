@@ -216,9 +216,11 @@ class StockRefreshScheduler:
             return self._running_tasks[task_id]
         
         # 再查数据库中的历史任务
-        if db_manager.db:
+        if db_manager.db is not None:
             task_data = db_manager.tasks_collection.find_one({"task_id": task_id})
             if task_data:
+                if "_id" in task_data: # 确保 _id 字段在从数据库获取时被处理
+                    task_data["_id"] = str(task_data["_id"])
                 return RefreshTask(**task_data)
         
         return None
@@ -232,11 +234,13 @@ class StockRefreshScheduler:
             tasks.append(task)
         
         # 从数据库获取历史任务
-        if db_manager.db:
+        if db_manager.db is not None:
             cursor = db_manager.tasks_collection.find().sort("created_time", -1).limit(limit)
             for task_data in cursor:
                 # 避免重复添加运行中的任务
                 if task_data["task_id"] not in self._running_tasks:
+                    if "_id" in task_data: # 确保 _id 字段在从数据库获取时被处理
+                        task_data["_id"] = str(task_data["_id"])
                     tasks.append(RefreshTask(**task_data))
         
         # 按创建时间排序
@@ -247,7 +251,7 @@ class StockRefreshScheduler:
     async def _save_task(self, task: RefreshTask):
         """保存任务到数据库"""
         try:
-            if not db_manager.db:
+            if db_manager.db is None:
                 return
             
             # 转换为字典并处理特殊字段

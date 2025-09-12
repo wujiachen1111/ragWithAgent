@@ -8,10 +8,30 @@ import akshare as ak
 import pandas as pd
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+from functools import wraps
 from loguru import logger
 
 from ..core.config import settings
 from ..utils.helpers import safe_convert_value, determine_market, format_secid, classify_holder_type
+
+
+def api_retry(func):
+    """
+    装饰器：对akshare API调用进行重试，并记录详细日志。
+    """
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        for i in range(settings.data.retry_count):
+            try:
+                logger.debug(f"尝试第 {i+1}/{settings.data.retry_count} 次调用 {func.__name__}...")
+                result = func(self, *args, **kwargs)
+                logger.debug(f"✅ 成功调用 {func.__name__} 第 {i+1}/{settings.data.retry_count} 次。")
+                return result
+            except Exception as e:
+                logger.warning(f"❌ 调用 {func.__name__} 失败 (第 {i+1}/{settings.data.retry_count} 次)。错误: {e}")
+                if i == settings.data.retry_count - 1:
+                    raise
+    return wrapper
 
 
 class StockDataFetcher:
@@ -58,14 +78,21 @@ class StockDataFetcher:
         fields = (
             "f57,f58,f43,f168,f60,f167,f47,"  # 原有字段
             "f116,f117,f86,f84,f85,f169,f170,"  # 新增字段
-            "f127,f104,f107,f105,f162,f92,f71"  # 新增字段
+            "f127,f107,f105,f162,f92,f71"  # 移除了 f104 (地区)
         )
         url = f"https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields={fields}"
         
         try:
             response = self.session.get(url, timeout=settings.data.request_timeout)
             response.raise_for_status()
-            data = response.json().get("data", {})
+            json_response = response.json()
+            
+            # 增加对空响应的检查
+            if not json_response or not json_response.get("data"):
+                logger.warning(f"股票 {stock_code} 的API响应为空或无数据")
+                return self._get_empty_basic_info()
+            
+            data = json_response["data"]
             
             # 获取总手数据
             volume = safe_convert_value(data.get("f47", 0))
@@ -74,13 +101,10 @@ class StockDataFetcher:
             if volume == 0:
                 volume = self._get_volume_from_tencent(stock_code)
             
-            # 处理行业和地区字段
+            # 处理行业字段
             industry = data.get("f127", "")
-            area = data.get("f104", "")
             if isinstance(industry, (int, float)) and industry > 100000000:
                 industry = ""
-            if isinstance(area, (int, float)) and area > 100000000:
-                area = ""
             
             # 返回扩展的基本信息
             return {
@@ -99,7 +123,6 @@ class StockDataFetcher:
                 "eps": safe_convert_value(data.get("f92", "N/A")),
                 "bps": safe_convert_value(data.get("f71", "N/A")),
                 "industry": industry,
-                "area": area,
                 "total_shares": safe_convert_value(data.get("f86", 0), 10000),
                 "circulating_shares": safe_convert_value(data.get("f169", 0), 10000),
                 "beta": safe_convert_value(data.get("f105", "N/A"))
@@ -144,7 +167,6 @@ class StockDataFetcher:
             "eps": 0,
             "bps": 0,
             "industry": "",
-            "area": "",
             "total_shares": 0,
             "circulating_shares": 0,
             "beta": 0
@@ -165,13 +187,20 @@ class StockDataFetcher:
             holders = []
             for date in report_dates:
                 try:
+                    df = None
                     # 检查缓存
-                    if date not in self._holder_cache:
-                        df = ak.stock_gdfx_free_holding_detail_em(date=date)
-                        self._holder_cache[date] = df
-                    else:
+                    if date in self._holder_cache:
                         df = self._holder_cache[date]
-                    
+                    else:
+                        # 核心：带重试的获取逻辑
+                        df = self._fetch_holders_with_retry(stock_code, date=date)
+                        if df is not None:
+                            self._holder_cache[date] = df
+
+                    if df is None:
+                        # 如果获取失败（包括所有重试都失败），则跳过此报告期
+                        continue
+
                     # 筛选当前股票的股东数据
                     df_filtered = df[df["股票代码"] == stock_code]
                     
@@ -194,16 +223,35 @@ class StockDataFetcher:
                                 "change_ratio": row.get("期末持股-变化比例", "0%"),
                                 "pledged_shares": pledged_shares
                             })
+                        # 成功获取到一个有效报告期的数据后，就无需再尝试更早的日期
                         break
                 except Exception as e:
-                    logger.warning(f"获取 {stock_code} 报告期 {date} 股东信息失败: {e}")
+                    logger.error(f"处理股票 {stock_code} 报告期 {date} 股东信息时发生严重错误: {e}")
                     continue
             
             return holders[:10]
         except Exception as e:
             logger.error(f"获取股票 {stock_code} 股东信息失败: {e}")
             return []
+
+    @api_retry
+    def _fetch_holders_with_retry(self, stock_code: str, date: str) -> Optional[pd.DataFrame]:
+        """带重试和详细日志的获取股东信息"""
+        logger.debug(f"--> [akshare] 开始获取 {stock_code} 报告期 {date} 的股东数据...")
+        start_time = time.time()
+        try:
+            # 这个akshare调用是潜在的耗时操作
+            df = ak.stock_gdfx_free_holding_detail_em(date=date)
+            duration = time.time() - start_time
+            logger.debug(f"<-- [akshare] 成功获取报告期 {date} 数据，耗时 {duration:.2f} 秒")
+            return df
+        except Exception as e:
+            duration = time.time() - start_time
+            # 重新抛出异常，以便 @api_retry 装饰器能捕捉到并执行重试
+            logger.warning(f"<-- [akshare] 获取报告期 {date} 数据失败，耗时 {duration:.2f} 秒。")
+            raise e
     
+    @api_retry
     def get_kline_data(self, stock_code: str, period: str, count: int) -> List[Dict[str, Any]]:
         """获取K线数据"""
         market = determine_market(stock_code)

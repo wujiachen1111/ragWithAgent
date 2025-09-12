@@ -44,8 +44,8 @@ class DatabaseConfig(BaseModel):
 class DataFetcherConfig(BaseModel):
     """数据获取器配置"""
     request_timeout: float = 30.0
-    request_delay: float = 0.1
-    max_retries: int = 3
+    request_delay: float = 0.5  # 增加默认延迟以避免IP被封
+    retry_count: int = 3
     user_agent: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3"
 
 class SystemConfig(BaseSettings):

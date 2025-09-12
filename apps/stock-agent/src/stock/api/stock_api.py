@@ -35,7 +35,6 @@ def get_scheduler() -> StockRefreshScheduler:
 async def query_stocks(
     codes: Optional[List[str]] = Query(None, description="股票代码列表"),
     industries: Optional[List[str]] = Query(None, description="行业列表"),
-    areas: Optional[List[str]] = Query(None, description="地区列表"),
     min_market_cap: Optional[float] = Query(None, description="最小市值(亿元)"),
     max_market_cap: Optional[float] = Query(None, description="最大市值(亿元)"),
     min_pe: Optional[float] = Query(None, description="最小市盈率"),
@@ -55,7 +54,6 @@ async def query_stocks(
         query = StockQuery(
             codes=codes,
             industries=industries,
-            areas=areas,
             min_market_cap=min_market_cap,
             max_market_cap=max_market_cap,
             min_pe=min_pe,
@@ -151,31 +149,6 @@ async def get_all_industries(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取行业列表失败: {str(e)}")
-
-
-@router.get("/areas/all", summary="获取所有地区")
-async def get_all_areas(
-    service: StockService = Depends(get_stock_service)
-):
-    """
-    获取所有地区列表
-    """
-    try:
-        # 确保数据库连接
-        if not db_manager.client:
-            db_manager.connect()
-            
-        areas = await service.get_areas()
-        
-        return {
-            "success": True,
-            "data": areas,
-            "total": len(areas),
-            "message": f"获取到 {len(areas)} 个地区"
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取地区列表失败: {str(e)}")
 
 
 @router.get("/industry/{industry}/codes", summary="获取行业股票代码")
@@ -283,39 +256,6 @@ async def get_database_stats(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取数据库统计失败: {str(e)}")
-
-
-@router.get("/health", summary="健康检查")
-async def health_check():
-    """
-    服务健康检查
-    """
-    try:
-        # 检查数据库连接
-        if not db_manager.client:
-            db_manager.connect()
-            
-        # 简单查询测试
-        count = db_manager.stocks_collection.count_documents({})
-        
-        return {
-            "success": True,
-            "status": "healthy",
-            "database": "connected",
-            "stock_count": count,
-            "timestamp": datetime.now(),
-            "message": "Stock Agent 服务运行正常"
-        }
-        
-    except Exception as e:
-        return {
-            "success": False,
-            "status": "unhealthy",
-            "database": "disconnected",
-            "error": str(e),
-            "timestamp": datetime.now(),
-            "message": "Stock Agent 服务异常"
-        }
 
 
 # ==================== 数据刷新相关API ====================

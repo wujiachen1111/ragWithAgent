@@ -31,6 +31,11 @@ class StockService:
             # 获取完整数据
             data = self.data_fetcher.get_stock_complete_data(stock_code)
             
+            # 增加健壮性检查：如果连基本信息（如股票名称）都没有，则认为获取失败
+            if not data.get("basic_info") or not data["basic_info"].get("stock_name"):
+                logger.warning(f"未能获取股票 {stock_code} 的有效基本信息，终止保存。")
+                return False
+            
             # 保存到数据库
             success = await self._save_stock_data(
                 stock_code,
@@ -102,7 +107,7 @@ class StockService:
     
     async def query_stocks(self, query: StockQuery) -> List[Dict[str, Any]]:
         """查询股票数据"""
-        if not db_manager.db:
+        if db_manager.db is None:
             raise RuntimeError("数据库未连接")
         
         # 构建MongoDB查询条件
@@ -113,9 +118,6 @@ class StockService:
         
         if query.industries:
             mongo_query["basic_info.industry"] = {"$in": query.industries}
-        
-        if query.areas:
-            mongo_query["basic_info.area"] = {"$in": query.areas}
         
         if query.min_market_cap is not None:
             mongo_query["basic_info.total_market_cap"] = {"$gte": query.min_market_cap}
@@ -154,33 +156,36 @@ class StockService:
                         result["kline_month"], start_str, end_str
                     )
         
+        # 序列化ObjectId
+        for result in results:
+            if "_id" in result:
+                result["_id"] = str(result["_id"])
+        
         return results
     
     async def get_stock_by_code(self, stock_code: str) -> Optional[Dict[str, Any]]:
         """根据代码获取单只股票数据"""
-        if not db_manager.db:
+        if db_manager.db is None:
             raise RuntimeError("数据库未连接")
         
         result = db_manager.stocks_collection.find_one({"stock_code": stock_code})
+        
+        # 序列化ObjectId
+        if result and "_id" in result:
+            result["_id"] = str(result["_id"])
+            
         return result
     
     async def get_industries(self) -> List[str]:
         """获取所有行业列表"""
-        if not db_manager.db:
+        if db_manager.db is None:
             raise RuntimeError("数据库未连接")
         
         return db_manager.stocks_collection.distinct("basic_info.industry")
     
-    async def get_areas(self) -> List[str]:
-        """获取所有地区列表"""
-        if not db_manager.db:
-            raise RuntimeError("数据库未连接")
-        
-        return db_manager.stocks_collection.distinct("basic_info.area")
-    
     async def get_stocks_by_industry(self, industry: str) -> List[str]:
         """获取指定行业的股票代码"""
-        if not db_manager.db:
+        if db_manager.db is None:
             raise RuntimeError("数据库未连接")
         
         results = db_manager.stocks_collection.find(
@@ -192,7 +197,7 @@ class StockService:
     
     async def get_database_stats(self) -> Dict[str, Any]:
         """获取数据库统计信息"""
-        if not db_manager.db:
+        if db_manager.db is None:
             raise RuntimeError("数据库未连接")
         
         total_stocks = db_manager.stocks_collection.count_documents({})
@@ -205,14 +210,6 @@ class StockService:
         ]
         industry_stats = list(db_manager.stocks_collection.aggregate(pipeline))
         
-        # 按地区统计
-        pipeline = [
-            {"$group": {"_id": "$basic_info.area", "count": {"$sum": 1}}},
-            {"$sort": {"count": -1}},
-            {"$limit": 10}
-        ]
-        area_stats = list(db_manager.stocks_collection.aggregate(pipeline))
-        
         # 最近更新时间
         latest_update = db_manager.stocks_collection.find_one(
             {}, {"update_time": 1}, sort=[("update_time", -1)]
@@ -221,7 +218,6 @@ class StockService:
         return {
             "total_stocks": total_stocks,
             "top_industries": industry_stats,
-            "top_areas": area_stats,
             "latest_update": latest_update.get("update_time") if latest_update else None
         }
     
@@ -229,7 +225,7 @@ class StockService:
                               day_kline: List[Dict], month_kline: List[Dict]) -> bool:
         """保存股票数据到MongoDB"""
         try:
-            if not db_manager.db:
+            if db_manager.db is None:
                 raise RuntimeError("数据库未连接")
             
             # 准备文档数据
