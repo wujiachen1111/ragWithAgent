@@ -23,34 +23,59 @@ class StockService:
         """获取所有股票代码"""
         return self.data_fetcher.get_all_stock_codes()
     
-    async def fetch_and_save_stock(self, stock_code: str) -> bool:
-        """获取并保存单只股票数据"""
+    async def fetch_and_save_stock(self, stock_code: str, refresh_holders: bool = True) -> bool:
+        """
+        获取并保存单只股票数据
+        :param stock_code: 股票代码
+        :param refresh_holders: 是否刷新股东信息
+        """
         try:
-            logger.info(f"开始处理股票 {stock_code}")
+            logger.info(f"开始处理股票 {stock_code} (刷新股东: {refresh_holders})")
+
+            # 获取基本信息
+            basic_info = self.data_fetcher.get_stock_basic_info(stock_code)
             
-            # 获取完整数据
-            data = self.data_fetcher.get_stock_complete_data(stock_code)
-            
-            # 增加健壮性检查：如果连基本信息（如股票名称）都没有，则认为获取失败
-            if not data.get("basic_info") or not data["basic_info"].get("stock_name"):
+            if not basic_info or not basic_info.get("stock_name"):
                 logger.warning(f"未能获取股票 {stock_code} 的有效基本信息，终止保存。")
                 return False
             
-            # 保存到数据库
-            success = await self._save_stock_data(
-                stock_code,
-                data["basic_info"],
-                data["holders"],
-                data["kline_day"],
-                data["kline_month"]
-            )
+            logger.info(f"✅ 基本信息获取完成: {basic_info['stock_name']}")
+
+            # 获取K线数据
+            kline_day = self.data_fetcher.get_kline_data(stock_code, "day", 22)
+            logger.info(f"✅ 日K线获取完成: {len(kline_day)} 条")
+            kline_month = self.data_fetcher.get_kline_data(stock_code, "month", 24)
+            logger.info(f"✅ 月K线获取完成: {len(kline_month)} 条")
             
-            if success:
-                logger.info(f"✅ 股票 {stock_code} 数据保存成功")
-            else:
-                logger.error(f"❌ 股票 {stock_code} 数据保存失败")
-                
-            return success
+            # 准备要更新的数据
+            update_data = {
+                "basic_info": prepare_mongodb_document(basic_info),
+                "kline_day": prepare_mongodb_document(kline_day),
+                "kline_month": prepare_mongodb_document(kline_month),
+                "update_time": datetime.now()
+            }
+
+            # 根据标志决定是否刷新股东信息
+            if refresh_holders:
+                holders = self.data_fetcher.get_top_holders(stock_code)
+                logger.info(f"✅ 股东信息获取完成: {len(holders)} 条")
+                update_data["holders"] = prepare_mongodb_document(holders)
+            
+            # # 添加延迟, data_fetcher中已有延迟，此处无需重复
+            # time.sleep(0.5)
+
+            # 保存到数据库
+            if db_manager.db is None:
+                raise RuntimeError("数据库未连接")
+            
+            db_manager.stocks_collection.update_one(
+                {"stock_code": stock_code},
+                {"$set": update_data},
+                upsert=True
+            )
+
+            logger.info(f"✅ 股票 {stock_code} 数据保存成功")
+            return True
             
         except Exception as e:
             logger.error(f"处理股票 {stock_code} 时发生错误: {e}")
@@ -220,36 +245,6 @@ class StockService:
             "top_industries": industry_stats,
             "latest_update": latest_update.get("update_time") if latest_update else None
         }
-    
-    async def _save_stock_data(self, stock_code: str, basic_info: Dict, holders: List[Dict], 
-                              day_kline: List[Dict], month_kline: List[Dict]) -> bool:
-        """保存股票数据到MongoDB"""
-        try:
-            if db_manager.db is None:
-                raise RuntimeError("数据库未连接")
-            
-            # 准备文档数据
-            document = {
-                "stock_code": stock_code,
-                "basic_info": prepare_mongodb_document(basic_info),
-                "holders": prepare_mongodb_document(holders),
-                "kline_day": prepare_mongodb_document(day_kline),
-                "kline_month": prepare_mongodb_document(month_kline),
-                "update_time": datetime.now()
-            }
-            
-            # 使用upsert操作
-            result = db_manager.stocks_collection.update_one(
-                {"stock_code": stock_code},
-                {"$set": document},
-                upsert=True
-            )
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"保存股票 {stock_code} 数据失败: {e}")
-            return False
     
     def _filter_kline_by_date(self, kline_data: List[Dict], start_date: Optional[str], 
                              end_date: Optional[str]) -> List[Dict]:

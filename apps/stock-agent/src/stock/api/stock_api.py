@@ -5,6 +5,7 @@
 from typing import List, Optional
 from fastapi import APIRouter, Query, HTTPException, Depends
 from datetime import datetime
+from loguru import logger
 
 from ..models.base import StockQuery, BatchProcessResult, RefreshTask
 from ..services.stock_service import StockService
@@ -276,19 +277,18 @@ async def refresh_single_stock(
         # 执行单只股票刷新
         task = await scheduler.refresh_single_stock(stock_code)
         
+        # 使用 model_dump(mode='json') 来确保所有字段都被正确序列化
+        task_data = task.model_dump(mode='json')
+
         return {
             "success": True,
-            "data": {
-                "task_id": task.task_id,
-                "stock_code": stock_code,
-                "status": task.status,
-                "start_time": task.start_time,
-                "result": task.result.model_dump() if task.result else None
-            },
+            "data": task_data,
             "message": f"股票 {stock_code} 刷新任务已完成"
         }
         
     except Exception as e:
+        # 增加日志记录，以便于调试
+        logger.error(f"刷新股票 {stock_code} 接口调用失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"刷新股票 {stock_code} 失败: {str(e)}")
 
 

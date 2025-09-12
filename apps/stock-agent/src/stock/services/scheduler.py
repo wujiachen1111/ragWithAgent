@@ -156,43 +156,37 @@ class StockRefreshScheduler:
             await self._save_task(task)
             
             # 刷新单只股票数据
-            success = await self.stock_service.fetch_and_save_stock(stock_code)
+            success = await self.stock_service.fetch_and_save_stock(stock_code, refresh_holders=False)
             
+            # 根据刷新结果构造 BatchProcessResult
             if success:
-                # 构造成功结果
                 result = BatchProcessResult(
-                    total=1,
-                    success=1,
-                    failed=0,
-                    success_rate=1.0,
-                    processed_codes=[stock_code],
-                    failed_codes=[]
+                    total=1, success=1, failed=0, success_rate=1.0,
+                    processed_codes=[stock_code], failed_codes=[]
                 )
-                
                 task.status = "completed"
                 task.result = result
                 logger.info(f"✅ 股票 {stock_code} 数据刷新成功")
-                
             else:
-                # 构造失败结果
                 result = BatchProcessResult(
-                    total=1,
-                    success=0,
-                    failed=1,
-                    success_rate=0.0,
-                    processed_codes=[],
-                    failed_codes=[stock_code]
+                    total=1, success=0, failed=1, success_rate=0.0,
+                    processed_codes=[], failed_codes=[stock_code]
                 )
-                
                 task.status = "failed"
                 task.result = result
                 task.error_message = f"股票 {stock_code} 数据获取失败"
                 logger.error(f"❌ 股票 {stock_code} 数据刷新失败")
-            
+
         except Exception as e:
             logger.error(f"❌ 刷新股票 {stock_code} 时发生错误: {e}")
             task.status = "failed"
             task.error_message = str(e)
+            # 即使发生异常，也创建一个空的result对象，避免序列化错误
+            if not task.result:
+                task.result = BatchProcessResult(
+                    total=1, success=0, failed=1, success_rate=0.0,
+                    processed_codes=[], failed_codes=[stock_code]
+                )
             
         finally:
             task.end_time = datetime.now()
