@@ -243,7 +243,7 @@ class DataCollectionOrchestrator:
     async def collect_hot_discovery(self, hours_back: int = 6, 
                                   max_items: int = 30) -> List[Dict[str, Any]]:
         """智能热点发现"""
-        return await hot_news_discovery.discover_hot_news(hours_back, max_items)
+        return await hot_news_discovery.discover_hot_news(hours_back=hours_back, max_items=max_items)
     
     async def collect_by_keywords(self, keywords: List[str], 
                                 max_items: int = 50) -> Dict[str, Any]:
@@ -360,7 +360,9 @@ class DataCollectionOrchestrator:
         try:
             db = next(get_db())
             recent_count = db.query(NewsItem).filter(
-                NewsItem.created_at >= datetime.now(timezone.utc) - timedelta(hours=24)
+                NewsItem.collected_at != None  # noqa: E711
+            ).filter(
+                NewsItem.collected_at >= datetime.now(timezone.utc) - timedelta(hours=24)
             ).count()
             
             total_count = db.query(NewsItem).count()
@@ -379,21 +381,33 @@ class DataCollectionOrchestrator:
         
         return status
     
-    async def analyze_collected_news(self, hours_back: int = 1) -> Dict[str, Any]:
-        """分析最近采集的新闻（包含实体识别）"""
+    async def analyze_collected_news(self, hours_back: int = 1, limit: int = 20, source: Optional[str] = None) -> Dict[str, Any]:
+        """分析最近采集的新闻（包含实体识别）。
+
+        兼容老数据：当 collected_at 为空时，以 published_at 作为回退时间字段。
+        """
         try:
             db = next(get_db())
             
             # 获取最近采集的新闻
             cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours_back)
-            recent_news = db.query(NewsItem).filter(
-                NewsItem.collected_at >= cutoff_time
-            ).limit(20).all()  # 限制分析数量，避免API调用过多
+            q = db.query(NewsItem).filter(
+                (NewsItem.collected_at != None) & (NewsItem.collected_at >= cutoff_time)  # noqa: E711
+                |
+                ((NewsItem.collected_at == None) & (NewsItem.published_at != None) & (NewsItem.published_at >= cutoff_time))  # noqa: E711
+            )
+            if source:
+                q = q.filter(NewsItem.source == source)
+            recent_news = (
+                q.order_by(NewsItem.published_at.desc().nullslast())
+                 .limit(limit)
+                 .all()
+            )  # 限制分析数量，避免API调用过多
             
             if not recent_news:
                 return {
                     "success": True,
-                    "message": "没有找到最近采集的新闻",
+                    "message": "没有找到符合时间窗口的新闻（请先采集或扩大 hours_back）",
                     "analyzed_count": 0
                 }
             
@@ -485,37 +499,30 @@ class DataCollectionOrchestrator:
             }
 
     async def cleanup_old_data(self, days_to_keep: int = 30) -> Dict[str, Any]:
-        """清理旧数据"""
+        """清理旧数据（基于 collected_at 字段）。"""
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=days_to_keep)
-        
+
         try:
             db = next(get_db())
-            
-            # 删除旧新闻
-            deleted_news = db.query(NewsItem).filter(
-                NewsItem.created_at < cutoff_date
-            ).count()
-            
-            db.query(NewsItem).filter(
-                NewsItem.created_at < cutoff_date
-            ).delete()
-            
+
+            q = db.query(NewsItem).filter(NewsItem.collected_at != None).filter(  # noqa: E711
+                NewsItem.collected_at < cutoff_date
+            )
+            deleted_news = q.count()
+            q.delete(synchronize_session=False)
             db.commit()
-            
+
             app_logger.info(f"清理完成，删除了 {deleted_news} 条旧新闻")
-            
+
             return {
                 "success": True,
                 "deleted_news": deleted_news,
-                "cutoff_date": cutoff_date
+                "cutoff_date": cutoff_date,
             }
-            
+
         except Exception as e:
             app_logger.error(f"数据清理失败: {e}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
+            return {"success": False, "error": str(e)}
 
 
 # 创建全局实例

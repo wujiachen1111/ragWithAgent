@@ -1,6 +1,6 @@
 import os
 from typing import Optional
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 from pathlib import Path
 
@@ -61,7 +61,20 @@ class Settings(BaseSettings):
     
     # 安全配置
     access_token_expire_minutes: int = 1440
+
+    # 严格外部依赖（生产建议开启）。当开启时，服务不会回退到内存/SQLite。
+    require_external_services: bool = False  # 全局严格模式
+    require_redis: bool = False  # 仅Redis严格
+    # 可按需扩展：require_postgres/require_chromadb
     
+    # Pydantic v2 settings config
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="allow",  # 忽略未声明的环境变量，避免跨服务变量导致报错
+    )
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.load_api_keys()
@@ -93,10 +106,7 @@ class Settings(BaseSettings):
         except Exception as e:
             print(f"加载API密钥失败: {e}")
     
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
+    # 注意：Pydantic v2 不允许同时定义 Config 和 model_config，这里仅使用 model_config。
 
 
 @lru_cache()

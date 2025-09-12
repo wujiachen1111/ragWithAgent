@@ -176,11 +176,25 @@ class DataCleanupService:
             app_logger.warning(f"向量数据库清理失败: {e}")
     
     def get_database_stats(self) -> Dict[str, Any]:
-        """获取数据库统计信息"""
+        """获取数据库统计信息与连接信息（不泄露密码）。"""
         try:
             db = next(get_db())
             
-            stats = {}
+            stats: Dict[str, Any] = {}
+            # 连接信息
+            try:
+                eng = db.get_bind()
+                url = eng.url
+                stats["engine"] = {
+                    "dialect": eng.dialect.name,
+                    "driver": getattr(eng.dialect, "driver", None),
+                    "url": url.render_as_string(hide_password=True),
+                    "database": getattr(url, "database", None),
+                    "host": getattr(url, "host", None),
+                    "port": getattr(url, "port", None),
+                }
+            except Exception as e:
+                stats["engine"] = {"error": str(e)}
             
             # 统计各表的记录数
             stats["news_items"] = db.query(NewsItem).count()
@@ -191,20 +205,23 @@ class DataCleanupService:
             stats["key_events"] = db.query(KeyEvent).count()
             
             # 统计数据时间范围
-            latest_news = db.query(NewsItem.collected_at).order_by(
+            latest_row = db.query(NewsItem.collected_at).order_by(
                 NewsItem.collected_at.desc()
             ).first()
-            
-            oldest_news = db.query(NewsItem.collected_at).order_by(
+            oldest_row = db.query(NewsItem.collected_at).order_by(
                 NewsItem.collected_at.asc()
             ).first()
-            
-            if latest_news and oldest_news:
-                stats["latest_news_time"] = latest_news[0]
-                stats["oldest_news_time"] = oldest_news[0]
-                stats["data_span_hours"] = (
-                    latest_news[0] - oldest_news[0]
-                ).total_seconds() / 3600
+
+            latest_ts = latest_row[0] if (latest_row and latest_row[0] is not None) else None
+            oldest_ts = oldest_row[0] if (oldest_row and oldest_row[0] is not None) else None
+
+            if latest_ts is not None and oldest_ts is not None:
+                stats["latest_news_time"] = latest_ts
+                stats["oldest_news_time"] = oldest_ts
+                try:
+                    stats["data_span_hours"] = (latest_ts - oldest_ts).total_seconds() / 3600
+                except Exception:
+                    stats["data_span_hours"] = None
             
             return stats
             

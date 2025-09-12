@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta, timezone
 
 from yuqing.core.database import get_db
-from yuqing.core.logging import logger
+from yuqing.core.logging import app_logger as logger
 from yuqing.models.database_models import (
     NewsItem, StockAnalysis, MentionedCompany, 
     MentionedPerson, IndustryImpact, KeyEvent

@@ -17,6 +17,12 @@ import time
 import sys
 from pathlib import Path
 import psutil
+from typing import Optional
+
+try:
+    from dotenv import load_dotenv
+except Exception:
+    load_dotenv = None
 
 
 class ServiceManager:
@@ -35,6 +41,16 @@ class ServiceManager:
             if proxy_var in os.environ:
                 del os.environ[proxy_var]
                 print(f"提示：已清除 {proxy_var} 环境变量以绕过系统代理。")
+
+        # 加载项目根目录的 .env（便于无需 export 也能传递到子进程）
+        if load_dotenv is not None:
+            env_path = self.project_root / ".env"
+            if env_path.exists():
+                try:
+                    load_dotenv(env_path)
+                    print(f"已加载环境变量文件: {env_path}")
+                except Exception:
+                    pass
         
     async def start_services(self, services=None):
         """启动指定服务或所有服务"""
@@ -186,20 +202,25 @@ class ServiceManager:
                     raise RuntimeError(f"yuqing-sentiment 端口 {yuqing_port} 已被占用（严格模式）")
         print(f"正在启动舆情分析服务 (端口: {yuqing_port})...")
         service_dir = self.project_root / "apps" / "yuqing-sentiment"
-        # 计算本地SQLite路径
+        # 数据库优先使用外部提供的 DATABASE_URL；未提供时才回退为本地 SQLite
         sqlite_path = (self.project_root / "data" / "yuqing" / "yuqing.db").resolve()
+        effective_db_url = os.environ.get("DATABASE_URL") or f"sqlite:///{sqlite_path}"
+
         env = {
-            **os.environ, 
-            "HOST": "0.0.0.0", 
-            "CHROMA_PERSIST_DIRECTORY": str(self.project_root / "data" / "yuqing" / "chromadb"),
-            # 使用本地SQLite，避免未启动Postgres导致失败
-            "DATABASE_URL": f"sqlite:///{sqlite_path}",
+            **os.environ,
+            "HOST": "0.0.0.0",
+            # 向量库持久目录；允许外部覆盖
+            "CHROMA_PERSIST_DIRECTORY": os.environ.get(
+                "CHROMA_PERSIST_DIRECTORY",
+                str(self.project_root / "data" / "yuqing" / "chromadb"),
+            ),
+            "DATABASE_URL": effective_db_url,
             # 使用本机Redis（可通过docker-compose启动）
-            "REDIS_URL": "redis://localhost:6379/0",
+            "REDIS_URL": os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
             # 禁用 Transformers 的 TensorFlow/Keras 分支
             "TRANSFORMERS_NO_TF": "1",
             # 确保可导入 src 下的包
-            "PYTHONPATH": f"{service_dir / 'src'}:{os.getenv('PYTHONPATH', '')}"
+            "PYTHONPATH": f"{service_dir / 'src'}:{os.getenv('PYTHONPATH', '')}",
         }
         process = subprocess.Popen([sys.executable, "-m", "src.main"], env=env, cwd=service_dir)
         self._write_pid_file("yuqing", process.pid)

@@ -188,7 +188,7 @@ class GoogleNewsService:
             return []
 
     async def save_to_database(self, news_items: List[Dict[str, Any]]) -> int:
-        """保存新闻到数据库"""
+        """保存新闻到数据库（以 URL 去重，使用自增ID）。"""
         if not news_items:
             return 0
             
@@ -198,9 +198,18 @@ class GoogleNewsService:
             
             for news_data in news_items:
                 try:
-                    # 检查是否已存在
-                    existing_news = db.query(NewsItem).filter(
-                        NewsItem.id == news_data["id"]
+                    # 规范化 URL（使用 source_url 作为唯一 URL）
+                    url = news_data.get("source_url") or ""
+                    if not url:
+                        # 无URL时构造基于标题和时间的伪URL，保证幂等
+                        title = news_data.get("title", "")
+                        h = hashlib.md5(title.encode("utf-8")).hexdigest()
+                        url = f"https://news.google.com/#news-{h}"
+
+                    # 检查是否已存在（按 url 去重）
+                    # 仅查 ID 以兼容旧表结构（避免选择缺失列）
+                    existing_news = db.query(NewsItem.id).filter(
+                        NewsItem.url == url
                     ).first()
                     
                     if existing_news:
@@ -208,18 +217,18 @@ class GoogleNewsService:
                     
                     # 创建新的新闻记录
                     news_item = NewsItem(
-                        id=news_data["id"],
-                        title=news_data["title"],
+                        title=news_data.get("title", ""),
                         content=news_data.get("content", ""),
                         summary=news_data.get("summary"),
-                        source=news_data["source"],
-                        source_url=news_data["source_url"],
-                        published_at=news_data["published_at"],
-                        collected_at=news_data["collected_at"],
+                        source=news_data.get("source", "google_news"),
+                        url=url,
+                        source_url=news_data.get("source_url"),
+                        published_at= news_data.get("published_at"),
+                        collected_at=news_data.get("collected_at"),
                         language=news_data.get("language", "zh"),
                         region=news_data.get("region", "global"),
                         raw_data=news_data.get("raw_data", {}),
-                        analysis_status="pending"
+                        analysis_status="pending",
                     )
                     
                     db.add(news_item)

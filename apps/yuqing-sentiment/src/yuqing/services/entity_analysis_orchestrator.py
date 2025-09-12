@@ -6,7 +6,7 @@ import asyncio
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 
-from yuqing.core.logging import logger
+from yuqing.core.logging import app_logger as logger
 from yuqing.models.database_models import NewsItem
 from yuqing.services.deepseek_service import deepseek_service, SentimentResult, EntityAnalysisResult
 from yuqing.core.database import get_db

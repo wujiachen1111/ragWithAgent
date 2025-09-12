@@ -4,7 +4,9 @@
 
 ```bash
 # 在项目根目录执行
-python scripts/start_all.py
+python start_all.py            # 默认启动 yuqing、stock_agent、rag
+# 或指定
+python start_all.py --services yuqing rag stock_agent
 ```
 
 ## 📋 手动启动步骤
@@ -12,7 +14,7 @@ python scripts/start_all.py
 ### 1. 启动舆情分析服务 (yuqing-sentiment)
 ```bash
 cd apps/yuqing-sentiment
-python src/main.py
+PYTHONPATH=./src python -m src.main
 # 服务运行在 http://localhost:8000
 ```
 
@@ -21,7 +23,7 @@ python src/main.py
 cd apps/rag-analysis
 # 确保 yuqing-sentiment 服务正在运行
 export YUQING_API_URL="http://localhost:8000"
-python src/main.py
+PYTHONPATH=./src python -m src.main
 # 服务运行在 http://localhost:8010
 ```
 
@@ -37,8 +39,8 @@ python tools/development/yuqing_integration_demo.py
 # 1. 检查YuQing-new状态
 curl http://localhost:8000/health
 
-# 2. 获取舆情数据
-curl "http://localhost:8000/api/news/comprehensive?hours=6&limit=5"
+# 2. 获取舆情数据（综合：新闻+可用的情感与实体）
+curl "http://localhost:8000/api/news/comprehensive?hours=6&limit=5&include_entities=true"
 
 # 3. 执行投资分析
 curl -X POST "http://localhost:8010/v1/analysis/execute" \
@@ -100,6 +102,7 @@ tail -f logs/yuqing/app.log
 # tail -f logs/rag-analysis/app.log 
 
 # 测试API连通性
+curl http://localhost:8000/health
 curl http://localhost:8000/api/news/stats
 curl http://localhost:8010/
 ```

@@ -6,6 +6,8 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
+import os
+from importlib.util import find_spec
 
 # 确保本服务的 src 目录优先，避免与项目根级同名包冲突（如 services/*）
 _SRC_DIR = Path(__file__).resolve().parents[1]
@@ -46,9 +48,17 @@ async def lifespan(app: FastAPI):
         app_logger.error("Redis连接失败，无法启动应用")
         raise Exception("Redis连接失败")
     
-    # 检查Chroma连接
-    if not check_chroma_connection():
-        app_logger.warning("Chroma向量数据库连接失败，相关功能将受限")
+    # 检查Chroma连接（可选，默认跳过以便本地/测试环境稳定）
+    try:
+        enable_vector = os.getenv("ENABLE_VECTOR_FEATURES", "0").lower() in {"1", "true", "yes"}
+        if enable_vector and find_spec("chromadb") is not None:
+            from yuqing.core import check_chroma_connection as _check_chroma
+            if not _check_chroma():
+                app_logger.warning("Chroma向量数据库连接失败，相关功能将受限")
+        else:
+            app_logger.info("已跳过Chroma向量数据库检查（设置 ENABLE_VECTOR_FEATURES=1 以启用）")
+    except Exception as _e:
+        app_logger.warning(f"跳过Chroma检查: {_e}")
     
     app_logger.info("系统启动完成")
     
@@ -93,7 +103,15 @@ async def health_check():
     """健康检查接口"""
     db_status = check_db_connection()
     redis_status = check_redis_connection()
-    chroma_status = check_chroma_connection()
+    # 仅在启用向量功能时才检查
+    try:
+        enable_vector = os.getenv("ENABLE_VECTOR_FEATURES", "0").lower() in {"1", "true", "yes"}
+        chroma_status = False
+        if enable_vector and find_spec("chromadb") is not None:
+            from yuqing.core import check_chroma_connection as _check_chroma
+            chroma_status = _check_chroma()
+    except Exception:
+        chroma_status = False
     
     status = "healthy" if db_status and redis_status else "unhealthy"
     

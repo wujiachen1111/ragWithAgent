@@ -1,9 +1,17 @@
-import chromadb
-from chromadb.config import Settings
 from typing import List, Dict, Any, Optional
 import numpy as np
 from yuqing.core.config import settings
 from yuqing.core.logging import app_logger
+
+# 可选依赖：chromadb（懒导入失败不致命）
+try:
+    import chromadb  # type: ignore
+    from chromadb.config import Settings as ChromaSettings  # type: ignore
+    _CHROMA_AVAILABLE = True
+except Exception:
+    chromadb = None  # type: ignore
+    ChromaSettings = None  # type: ignore
+    _CHROMA_AVAILABLE = False
 
 try:
     from sentence_transformers import SentenceTransformer
@@ -19,33 +27,33 @@ class ChromaClient:
     def __init__(self):
         # 初始化Chroma客户端
         try:
+            if not _CHROMA_AVAILABLE:
+                raise ImportError("chromadb not installed")
+
             # 使用配置文件中的路径
-            self.client = chromadb.PersistentClient(path=settings.chroma_persist_directory)
+            # 禁用 Chroma 遥测，避免本地开发时不必要的网络与警告
+            self.client = chromadb.PersistentClient(
+                path=settings.chroma_persist_directory,
+                settings=ChromaSettings(anonymized_telemetry=False),
+            )
             
-            # 初始化embedding模型
-            if SENTENCE_TRANSFORMERS_AVAILABLE:
-                try:
-                    # 首先尝试使用本地缓存的模型，避免网络下载
-                    import os
-                    import torch
-                    local_model_path = './models/all-MiniLM-L6-v2'
-                    
-                    if os.path.exists(local_model_path):
-                        self.embedding_model = SentenceTransformer(local_model_path)
-                        app_logger.info("使用本地Sentence Transformers模型")
-                    else:
-                        # 如果本地模型不存在，使用简单的文本向量化方法
-                        app_logger.warning("本地模型不存在，使用简化的文本向量化")
-                        self.embedding_model = None
-                        self.use_simple_embedding = True
-                except Exception as e:
-                    app_logger.warning(f"Sentence Transformers模型加载失败: {e}")
-                    app_logger.info("使用简化的文本向量化方法")
-                    self.embedding_model = None
-                    self.use_simple_embedding = True
-            else:
-                self.embedding_model = None
-                self.use_simple_embedding = True
+            # 初始化embedding模型（完全懒导入，避免在无依赖环境崩溃）
+            self.embedding_model = None
+            self.use_simple_embedding = True
+            try:
+                # 在需要时再导入，若失败则保持简化模式
+                from sentence_transformers import SentenceTransformer  # type: ignore
+                import os
+
+                local_model_path = './models/all-MiniLM-L6-v2'
+                if os.path.exists(local_model_path):
+                    self.embedding_model = SentenceTransformer(local_model_path)
+                    self.use_simple_embedding = False
+                    app_logger.info("使用本地Sentence Transformers模型")
+                else:
+                    app_logger.warning("本地模型不存在，使用简化的文本向量化")
+            except Exception as e:
+                app_logger.info(f"未启用Sentence Transformers，降级为简化向量化: {e}")
             
             # 创建集合
             if self.client:
@@ -287,21 +295,24 @@ class ChromaClient:
             return False
 
 
-# 全局Chroma客户端实例
-chroma_client = ChromaClient()
+# 全局Chroma客户端实例（延迟初始化，避免在导入时触发重依赖）
+_chroma_client: Optional[ChromaClient] = None
 
 
 def get_chroma_client() -> ChromaClient:
-    """获取Chroma客户端实例"""
-    return chroma_client
+    """获取Chroma客户端实例（懒加载）。"""
+    global _chroma_client
+    if _chroma_client is None:
+        _chroma_client = ChromaClient()
+    return _chroma_client
 
 
 def check_chroma_connection() -> bool:
-    """检查Chroma连接状态"""
+    """检查Chroma连接状态（若不可用则温和失败）。"""
     try:
-        if chroma_client and chroma_client.client:
-            # 简单检查客户端是否可用
-            chroma_client.client.heartbeat()
+        client = get_chroma_client()
+        if client and getattr(client, "client", None):
+            client.client.heartbeat()
             return True
         return False
     except Exception as e:
