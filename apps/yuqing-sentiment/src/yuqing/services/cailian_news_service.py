@@ -5,11 +5,6 @@ import os
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
 
-try:
-    import akshare as ak
-except ImportError:
-    ak = None
-
 from yuqing.core.logging import app_logger
 from yuqing.core.database import get_db
 from yuqing.models.database_models import NewsItem
@@ -23,6 +18,7 @@ class CailianNewsService:
         self.source_name = "cailian"
         self.data_dir = "data/cailian_news"
         self.news_hashes = set()
+        self._ak = None  # 懒加载 akshare
         
         # 确保数据目录存在
         os.makedirs(self.data_dir, exist_ok=True)
@@ -70,9 +66,14 @@ class CailianNewsService:
     
     async def fetch_cailian_news(self, limit: int = 100) -> List[Dict[str, Any]]:
         """获取财联社电报新闻"""
-        if ak is None:
-            app_logger.error("akshare未安装，无法获取财联社新闻")
-            return []
+        # 懒加载 akshare，避免在未使用时引入重依赖
+        if self._ak is None:
+            try:
+                import akshare as ak  # type: ignore
+                self._ak = ak
+            except Exception as e:
+                app_logger.error(f"akshare 未可用，无法获取财联社新闻: {e}")
+                return []
         
         try:
             app_logger.info("开始获取财联社电报数据")
@@ -81,7 +82,7 @@ class CailianNewsService:
             loop = asyncio.get_event_loop()
             stock_info_df = await loop.run_in_executor(
                 None, 
-                lambda: ak.stock_info_global_cls(symbol="全部")
+                lambda: self._ak.stock_info_global_cls(symbol="全部")
             )
             
             if stock_info_df.empty:
@@ -220,10 +221,10 @@ class CailianNewsService:
         from sqlalchemy import select
         from datetime import datetime
 
+        db: Session = next(get_db())
+        saved_count = 0
         try:
-            db = next(get_db())
-            saved_count = 0
-
+            urls_in_batch = set()
             for item in news_items:
                 try:
                     title = item.get("title")
@@ -248,8 +249,13 @@ class CailianNewsService:
                     if not title and not url:
                         continue
 
+                    # 增加批内去重
+                    if url in urls_in_batch:
+                        continue
+
                     # 去重：URL唯一
-                    exists = db.execute(select(NewsItem).where(NewsItem.url == url)).scalars().first()
+                    # 仅查询ID，避免旧表结构缺列导致的选择错误
+                    exists = db.execute(select(NewsItem.id).where(NewsItem.url == url)).first()
                     if exists:
                         continue
 
@@ -258,7 +264,8 @@ class CailianNewsService:
                         try:
                             published_dt = datetime.fromisoformat(published_at.replace('Z', '+00:00'))
                         except Exception:
-                            published_dt = None
+                            # 容错：若时间格式解析失败，则使用当前时间
+                            published_dt = datetime.now(timezone.utc)
                     else:
                         published_dt = published_at
 
@@ -270,30 +277,26 @@ class CailianNewsService:
                         content=content,
                     )
                     db.add(news_row)
-                    # 单条提交，避免批量提交因一条失败导致整体回滚
-                    db.commit()
+                    urls_in_batch.add(url)
                     saved_count += 1
 
                 except Exception as e:
-                    app_logger.error(f"保存财联社新闻项到数据库时出错: {e}")
-                    # 回滚单条事务，继续处理后续
-                    try:
-                        db.rollback()
-                    except Exception:
-                        pass
+                    app_logger.error(f"处理财联社新闻项时出错: {e}，已跳过")
                     continue
+            
+            # 仅当有新项目时才提交
+            if saved_count > 0:
+                db.commit()
 
             app_logger.info(f"财联社新闻保存到数据库: {saved_count} 条")
             return saved_count
 
         except Exception as e:
-            app_logger.error(f"保存财联社新闻到数据库时出错: {e}")
-            if 'db' in locals():
-                db.rollback()
+            app_logger.error(f"保存财联社新闻到数据库时发生严重错误: {e}")
+            db.rollback()
             return 0
         finally:
-            if 'db' in locals():
-                db.close()
+            db.close()
     
     async def get_latest_news(self, days: int = 1, limit: int = 50) -> List[Dict[str, Any]]:
         """获取最近的财联社新闻"""

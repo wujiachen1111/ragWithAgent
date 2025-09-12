@@ -9,7 +9,7 @@ from sqlalchemy import select, desc, and_, or_, func
 
 from yuqing.core.database import get_db
 from yuqing.models.database_models import NewsItem, StockAnalysis, MentionedCompany, MentionedPerson, IndustryImpact, KeyEvent
-from yuqing.core.logging import logger
+from yuqing.core.logging import app_logger as logger
 from yuqing.services.cailian_news_service import cailian_news_service
 
 router = APIRouter()
@@ -66,6 +66,7 @@ async def get_recent_news(
         # 保持接口契约：返回数组
         return []
 
+@router.get("", summary="获取新闻列表", include_in_schema=False)
 @router.get("/", summary="获取新闻列表")
 async def get_news_list(
     page: int = Query(1, ge=1, description="页码"),
@@ -82,7 +83,7 @@ async def get_news_list(
         
         # 时间过滤
         if hours:
-            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+            cutoff_time = datetime.utcnow() - timedelta(hours=hours)
             query = query.where(NewsItem.published_at >= cutoff_time)
         
         # 来源过滤
@@ -109,7 +110,7 @@ async def get_news_list(
         # 获取总数
         count_query = select(func.count()).select_from(NewsItem)
         if hours:
-            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+            cutoff_time = datetime.utcnow() - timedelta(hours=hours)
             count_query = count_query.where(NewsItem.published_at >= cutoff_time)
         if source:
             count_query = count_query.where(NewsItem.source.like(f"%{source}%"))
@@ -151,7 +152,7 @@ async def get_news_stats(
     """获取新闻统计信息"""
     try:
         # 时间过滤
-        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours) if hours else None
+        cutoff_time = datetime.utcnow() - timedelta(hours=hours) if hours else None
         
         # 基础查询
         base_query = select(NewsItem)
@@ -178,7 +179,7 @@ async def get_news_stats(
             by_analysis_status[status] = by_analysis_status.get(status, 0) + 1
         
         # 最近24小时统计
-        recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+        recent_cutoff = datetime.utcnow() - timedelta(hours=24)
         recent_query = select(NewsItem).where(NewsItem.published_at >= recent_cutoff)
         recent_news = db.execute(recent_query).scalars().all()
         recent_24h = len(recent_news)
@@ -302,7 +303,7 @@ async def get_comprehensive_news(
 ):
     """获取特定时间内所有已分析新闻的完整数据（包括情感分析和实体分析）"""
     try:
-        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_time = datetime.utcnow() - timedelta(hours=hours)
         
         # 查询已分析的新闻（有情感分析结果的）
         query = (
@@ -350,10 +351,10 @@ async def get_comprehensive_news(
             if analysis is not None:
                 sentiment_analysis = {
                     "analysis_id": analysis.id,
-                    "stock_code": analysis.stock_code,
-                    "sentiment": analysis.sentiment,
-                    "confidence": analysis.confidence,
-                    "summary": analysis.analysis_summary,
+                    "stock_code": getattr(analysis, "stock_code", None),
+                    "sentiment": getattr(analysis, "sentiment", None),
+                    "confidence": getattr(analysis, "confidence", None),
+                    "summary": getattr(analysis, "analysis_summary", None),
                 }
             
             # 构建完整数据对象
@@ -362,7 +363,7 @@ async def get_comprehensive_news(
                 complete_item["sentiment_analysis"] = sentiment_analysis
             
             # 获取实体分析数据（可选）
-            if include_entities:
+            if include_entities and analysis:
                 entities = {
                     "companies": [],
                     "persons": [],
@@ -372,7 +373,7 @@ async def get_comprehensive_news(
                 
                 # 查询公司实体
                 companies_query = select(MentionedCompany).where(
-                    MentionedCompany.news_id == news_item.id
+                    MentionedCompany.analysis_id == analysis.id
                 )
                 companies_result = db.execute(companies_query)
                 for company in companies_result.scalars():
@@ -384,30 +385,30 @@ async def get_comprehensive_news(
                 
                 # 查询人物实体
                 persons_query = select(MentionedPerson).where(
-                    MentionedPerson.news_id == news_item.id
+                    MentionedPerson.analysis_id == analysis.id
                 )
                 persons_result = db.execute(persons_query)
                 for person in persons_result.scalars():
                     entities["persons"].append({
                         "name": person.person_name,
-                        "title": person.title,
+                        "title": person.position_title,
                     })
                 
                 # 查询行业影响
                 industries_query = select(IndustryImpact).where(
-                    IndustryImpact.news_id == news_item.id
+                    IndustryImpact.analysis_id == analysis.id
                 )
                 industries_result = db.execute(industries_query)
                 for industry in industries_result.scalars():
                     entities["industries"].append({
                         "name": industry.industry_name,
                         "impact_description": industry.impact_description,
-                        "impact_score": industry.impact_score,
+                        "impact_score": industry.impact_magnitude,
                     })
                 
                 # 查询关键事件
                 events_query = select(KeyEvent).where(
-                    KeyEvent.news_id == news_item.id
+                    KeyEvent.analysis_id == analysis.id
                 )
                 events_result = db.execute(events_query)
                 for event in events_result.scalars():
@@ -534,7 +535,7 @@ async def get_source_stats(
             # 模型无 region 字段，省略
             
             if (source_stats[source]["latest"] is None or 
-                (item.published_at or datetime.min.replace(tzinfo=timezone.utc)) > source_stats[source]["latest"]):
+                (item.published_at or datetime.min) > source_stats[source]["latest"]):
                 source_stats[source]["latest"] = item.published_at
         
         # 转换set为list

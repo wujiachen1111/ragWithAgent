@@ -10,7 +10,7 @@ import aiohttp
 from dataclasses import dataclass
 
 from yuqing.core.config import settings
-from yuqing.core.logging import logger
+from yuqing.core.logging import app_logger as logger
 from yuqing.core.cache import cache_manager
 from yuqing.models.database_models import NewsItem, StockAnalysis
 from yuqing.core.database import get_db
@@ -422,11 +422,18 @@ class DeepSeekService:
             content = response["choices"][0]["message"]["content"]
             
             try:
-                # 提取JSON部分
+                # 提取疑似 JSON 并进行温和清洗
                 start_idx = content.find('{')
                 end_idx = content.rfind('}') + 1
                 if start_idx >= 0 and end_idx > start_idx:
                     json_content = content[start_idx:end_idx]
+                    # 去除代码块围栏
+                    json_content = json_content.replace('```json', '').replace('```', '')
+                    # 修复常见键名错误
+                    json_content = json_content.replace('"industries:', '"industries":')
+                    # 移除控制字符
+                    json_content = ''.join(ch for ch in json_content if ch >= ' ' or ch in '\n\r\t')
+                    
                     result_data = json.loads(json_content)
                     
                     # 缓存结果（24小时）
@@ -561,36 +568,40 @@ class DeepSeekService:
                 stock_analysis = existing_result.scalar_one_or_none()
                 
                 if not stock_analysis:
-                    # 创建新的股票分析记录
+                    # 创建新的股票分析记录（对齐当前模型字段）
                     stock_analysis = StockAnalysis(
                         news_id=news_item.id,
-                        analysis_timestamp=datetime.now(timezone.utc),
-                        sentiment_score=self._convert_sentiment_to_score(sentiment_result.sentiment),
+                        # 新字段
+                        sentiment=sentiment_result.sentiment,
+                        confidence=sentiment_result.confidence,
+                        analysis_summary=sentiment_result.summary,
+                        # 兼容旧字段
                         sentiment_label=sentiment_result.sentiment,
                         confidence_score=sentiment_result.confidence,
                         market_impact_level=sentiment_result.market_impact,
-                        market_impact_score=self._convert_impact_to_score(sentiment_result.market_impact),
-                        urgency_level='normal',  # 默认值
                         analysis_result={
                             'summary': sentiment_result.summary,
                             'keywords': sentiment_result.keywords,
                             'reasoning': sentiment_result.reasoning
-                        }
+                        },
+                        analysis_timestamp=datetime.now(timezone.utc),
                     )
                     db.add(stock_analysis)
                     saved_count += 1
                 else:
-                    # 更新现有记录
-                    stock_analysis.sentiment_score = self._convert_sentiment_to_score(sentiment_result.sentiment)
+                    # 更新现有记录（对齐当前模型字段）
+                    stock_analysis.sentiment = sentiment_result.sentiment
+                    stock_analysis.confidence = sentiment_result.confidence
+                    stock_analysis.analysis_summary = sentiment_result.summary
                     stock_analysis.sentiment_label = sentiment_result.sentiment
                     stock_analysis.confidence_score = sentiment_result.confidence
                     stock_analysis.market_impact_level = sentiment_result.market_impact
-                    stock_analysis.market_impact_score = self._convert_impact_to_score(sentiment_result.market_impact)
                     stock_analysis.analysis_result = {
                         'summary': sentiment_result.summary,
                         'keywords': sentiment_result.keywords,
                         'reasoning': sentiment_result.reasoning
                     }
+                    stock_analysis.analysis_timestamp = datetime.now(timezone.utc)
                     saved_count += 1
                 
                 # 更新新闻项的分析状态

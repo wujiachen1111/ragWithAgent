@@ -36,10 +36,10 @@ async def collect_and_analyze(background_tasks: BackgroundTasks):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/analyze/recent")
-async def analyze_recent_news(hours_back: int = 1):
-    """分析最近采集的新闻"""
+async def analyze_recent_news(hours_back: int = 1, source: Optional[str] = Query(None, description="可选：仅分析指定来源，如 'cailian'"), limit: int = Query(20, ge=1, le=100)):
+    """分析最近采集的新闻（可选按来源过滤）。"""
     try:
-        results = await data_collection_orchestrator.analyze_collected_news(hours_back)
+        results = await data_collection_orchestrator.analyze_collected_news(hours_back=hours_back, limit=limit, source=source)
         
         return {
             "message": "新闻分析完成",
@@ -122,7 +122,8 @@ async def test_google_news():
         from yuqing.services.google_news_service import google_news_service
         
         # 测试采集
-        results = await google_news_service.search_finance_news("股票", 5)
+        # 使用已实现的方法：抓取财经相关新闻，限制数量
+        results = await google_news_service.fetch_finance_news(limit=5)
         
         return {
             "message": "Google News测试完成",
@@ -131,6 +132,32 @@ async def test_google_news():
         }
     except Exception as e:
         app_logger.error(f"Google News测试失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/collect/all")
+async def collect_all(background_tasks: BackgroundTasks, analyze: bool = Query(False, description="是否在采集后进行分析")):
+    """触发全量采集。可选是否联动分析。
+
+    - analyze=false: 仅采集并入库，不调用 LLM。
+    - analyze=true: 采集后对最近新闻进行综合分析（需要外网与有效 API Key）。
+    """
+    try:
+        if analyze:
+            background_tasks.add_task(run_full_pipeline_with_analysis)
+            note = "已启动：采集 + 分析（后台执行）"
+        else:
+            background_tasks.add_task(run_full_collection)
+            note = "已启动：仅采集（后台执行）"
+
+        return {
+            "message": "数据采集任务已启动",
+            "analyze": analyze,
+            "status": "started",
+            "note": note,
+        }
+    except Exception as e:
+        app_logger.error(f"启动全量采集失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -182,8 +209,8 @@ async def test_gdelt():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/cleanup")
-async def cleanup_old_data(days_to_keep: int = Query(3, description="保留数据的天数")):
+@router.post("/cleanup/legacy")
+async def legacy_cleanup_old_data(days_to_keep: int = Query(3, description="保留数据的天数")):
     """清理旧数据"""
     try:
         hours_to_keep = days_to_keep * 24

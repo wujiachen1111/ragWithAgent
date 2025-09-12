@@ -1,8 +1,9 @@
 import redis
-from typing import Optional, Any
+from typing import Optional, Any, Dict, Tuple
 import json
 import pickle
 import asyncio
+import time
 from yuqing.core.config import settings
 from yuqing.core.logging import app_logger
 
@@ -88,10 +89,83 @@ class RedisClient:
             return False
 
 
-# 全局Redis客户端实例
-redis_client = RedisClient()
+class MemoryCache:
+    """简易内存缓存，用于无Redis环境的本地/测试降级。
 
-# 为了向后兼容，提供cache_manager别名
+    注意：该实现仅用于本地开发与单进程测试，不适合生产。
+    """
+
+    def __init__(self):
+        # key -> (value_bytes, expire_ts or None)
+        self._store: Dict[str, Tuple[bytes, Optional[float]]] = {}
+
+    async def get(self, key: str) -> Optional[Any]:
+        now = time.time()
+        item = self._store.get(key)
+        if not item:
+            return None
+        value_bytes, expire_ts = item
+        if expire_ts is not None and expire_ts < now:
+            # expired
+            self._store.pop(key, None)
+            return None
+        try:
+            return pickle.loads(value_bytes)
+        except Exception:
+            return None
+
+    async def set(self, key: str, value: Any, expire: int = None) -> bool:
+        try:
+            value_bytes = pickle.dumps(value)
+            expire_ts = time.time() + expire if expire else None
+            self._store[key] = (value_bytes, expire_ts)
+            return True
+        except Exception:
+            return False
+
+    async def delete(self, key: str) -> bool:
+        return self._store.pop(key, None) is not None
+
+    async def exists(self, key: str) -> bool:
+        now = time.time()
+        item = self._store.get(key)
+        if not item:
+            return False
+        _, expire_ts = item
+        if expire_ts is not None and expire_ts < now:
+            self._store.pop(key, None)
+            return False
+        return True
+
+    async def expire(self, key: str, ttl: int) -> bool:
+        if key not in self._store:
+            return False
+        value_bytes, _ = self._store[key]
+        self._store[key] = (value_bytes, time.time() + ttl)
+        return True
+
+    def ping(self) -> bool:
+        return True
+
+
+# 全局缓存客户端实例（优先Redis；若未要求严格且不可用则回退内存）
+try:
+    _tmp_client = RedisClient()
+    if _tmp_client.ping():
+        redis_client = _tmp_client
+    else:
+        if getattr(settings, "require_external_services", False) or getattr(settings, "require_redis", False):
+            app_logger.error("Redis不可用，且严格模式开启，禁止回退")
+            raise RuntimeError("Redis required but unavailable")
+        app_logger.warning("Redis不可用，回退到内存缓存（仅本地/测试用途）")
+        redis_client = MemoryCache()
+except Exception:
+    if getattr(settings, "require_external_services", False) or getattr(settings, "require_redis", False):
+        raise
+    app_logger.warning("初始化Redis失败，回退到内存缓存（仅本地/测试用途）")
+    redis_client = MemoryCache()
+
+# 为向后兼容提供别名
 cache_manager = redis_client
 
 
@@ -101,5 +175,19 @@ def get_cache_key(prefix: str, *args) -> str:
 
 
 def check_redis_connection() -> bool:
-    """检查Redis连接"""
-    return redis_client.ping()
+    """检查Redis连接；严格模式下返回真实状态，非严格模式失败则回退内存并视为可用。"""
+    global redis_client, cache_manager
+    try:
+        if redis_client and redis_client.ping():
+            return True
+    except Exception:
+        pass
+
+    if getattr(settings, "require_external_services", False) or getattr(settings, "require_redis", False):
+        return False
+
+    # 非严格模式回退
+    app_logger.warning("Redis连接检查失败，使用内存缓存降级模式")
+    redis_client = MemoryCache()
+    cache_manager = redis_client
+    return True

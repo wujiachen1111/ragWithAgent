@@ -26,9 +26,9 @@ class NarrativeArbitrageurAgent(BaseAgent):
         user = (
             f"主题: {request.topic}\n"
             f"标题: {request.headline or request.topic}\n"
-            f"内容: {request.content[:1200]}\n"
-            f"股票代码: {', '.join(request.symbols)}\n"
-            f"投资期限: {request.time_horizon}\n"
+            f"正文: {request.content[:2000]}\n"
+            f"符号: {', '.join(request.symbols)}\n"
+            f"区域: {request.region or 'N/A'}; 期限: {request.time_horizon}\n"
             "输出要求: meme_potential为0-1; influencers_take为2-4条; lifecycle_days为整数; priced_in为布尔值。"
         )
         try:
@@ -36,8 +36,9 @@ class NarrativeArbitrageurAgent(BaseAgent):
             return NarrativeFinding(**data)
         except Exception:
             # 回退启发式
-            src = request.headline or request.topic or request.content
-            one_liner = src if len(src) <= 50 else src[:47] + "..."
+            headline = request.headline or request.topic
+            one_liner = headline if len(
+                headline) <= 50 else headline[:47] + "..."
             meme_potential = 0.7 if request.time_horizon == TimeHorizon.short else 0.5
             influencers_take: List[str] = [
                 "大V解读：故事性感，利于传播",
@@ -64,9 +65,8 @@ class FirstOrderImpactQuantAgent(BaseAgent):
             "请明确: 影响线(P&L/BS/CF)、影响级别(magnitude: millions/tens_of_millions/hundreds_of_millions)、"
             "关键KPI变动百分比(kpi_shifts_pct)，以及是否持续(recurring)。仅返回JSON。")
         user = (
-            f"事件: {request.topic}\n"
-            f"内容: {request.content[:1200]}\n"
-            f"股票代码: {', '.join(request.symbols)}; 投资期限: {request.time_horizon}\n"
+            f"事件: {request.topic}\n内容: {request.content[:2000]}\n"
+            f"符号: {', '.join(request.symbols)}; 区域: {request.region or 'N/A'}; 期限: {request.time_horizon}\n"
             "基于历史可比样本与弹性假设给出估算; 如无数据请给出保守估计与理由。"
         )
         try:
@@ -95,9 +95,8 @@ class ContrarianSkepticAgent(BaseAgent):
             "overreaction_signals(拥挤交易/情绪极端/反身性)。仅返回JSON。"
         )
         user = (
-            f"事件: {request.topic}\n"
-            f"内容: {request.content[:1000]}\n"
-            f"股票代码: {', '.join(request.symbols)}\n"
+            f"事件: {request.topic}\n内容: {request.content[:2000]}\n"
+            f"符号: {', '.join(request.symbols)}; 区域: {request.region or 'N/A'}\n"
             "每条给出一句理由，避免空洞指控。"
         )
         try:
@@ -125,8 +124,8 @@ class SecondOrderEffectsStrategistAgent(BaseAgent):
             "覆盖即时/1-3个月/6-12个月; 仅返回JSON。")
         user = (
             f"事件: {request.topic}\n"
-            f"内容: {request.content[:1000]}\n"
-            f"股票代码: {', '.join(request.symbols)}\n"
+            f"内容: {request.content[:2000]}\n"
+            f"符号: {', '.join(request.symbols)}; 区域: {request.region or 'N/A'}\n"
         )
         try:
             data = await client.structured_json(system, user, temperature=0.2)

@@ -74,8 +74,8 @@ class HotNewsDiscoveryService:
             "业绩", "财报", "预亏", "预盈", "商誉减值"
         ]
 
-    async def discover_hot_news(self, hours_back: int = 6) -> List[Dict[str, Any]]:
-        """发现热点新闻"""
+    async def discover_hot_news(self, hours_back: int = 6, max_items: int | None = None) -> List[Dict[str, Any]]:
+        """发现热点新闻。可选地限制最大返回条数。"""
         app_logger.info(f"开始智能热点发现，回溯{hours_back}小时...")
         
         all_news = []
@@ -98,7 +98,7 @@ class HotNewsDiscoveryService:
                 all_news.extend(result)
         
         # 2. 分析热点
-        hot_news = await self._analyze_hot_trends(all_news, hours_back)
+        hot_news = await self._analyze_hot_trends(all_news, hours_back, max_items=max_items)
         
         app_logger.info(f"发现 {len(hot_news)} 条热点新闻")
         return hot_news
@@ -149,7 +149,7 @@ class HotNewsDiscoveryService:
             app_logger.error(f"解析RSS条目失败: {e}")
             return None
     
-    async def _analyze_hot_trends(self, news_list: List[Dict[str, Any]], hours_back: int) -> List[Dict[str, Any]]:
+    async def _analyze_hot_trends(self, news_list: List[Dict[str, Any]], hours_back: int, max_items: int | None = None) -> List[Dict[str, Any]]:
         """分析热点趋势"""
         if not news_list:
             return []
@@ -183,7 +183,8 @@ class HotNewsDiscoveryService:
         # 去重并按热度排序
         unique_hot = self._deduplicate_and_rank(hot_news)
         
-        return unique_hot[:50]  # 返回前50条热点
+        limit = max_items if (isinstance(max_items, int) and max_items > 0) else 50
+        return unique_hot[:limit]
     
     def _find_stock_mentions(self, news_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """发现股票相关热点"""
@@ -363,26 +364,32 @@ class HotNewsDiscoveryService:
         return trending
 
     async def save_to_database(self, news_items: List[Dict[str, Any]]) -> int:
-        """保存热点新闻到数据库"""
+        """保存热点新闻到数据库（以 URL 去重，自增ID）。"""
         if not news_items:
             return 0
-            
+        
+        db: Session = next(get_db())
+        saved_count = 0
         try:
-            db = next(get_db())
-            saved_count = 0
-            
+            urls_in_batch = set()
             for news_data in news_items:
                 try:
-                    # 生成唯一ID
-                    import hashlib
-                    title = news_data.get("title", "")
+                    # 规范化 URL（使用 source_url 作为唯一 URL）
                     url = news_data.get("source_url", "")
-                    content_hash = hashlib.md5((title + url).encode()).hexdigest()
-                    news_id = f"hot_news_{content_hash}"
-                    
-                    # 检查是否已存在
-                    existing_news = db.query(NewsItem).filter(
-                        NewsItem.id == news_id
+                    if not url:
+                        import hashlib
+                        title = news_data.get("title", "")
+                        content_hash = hashlib.md5((title).encode()).hexdigest()
+                        url = f"https://hot.discovery/#news-{content_hash}"
+
+                    # 增加批内去重
+                    if url in urls_in_batch:
+                        continue
+                        
+                    # 检查是否已存在（按 url 去重）
+                    # 仅查询ID，避免依赖旧库中缺失的列（如 source_url）
+                    existing_news = db.query(NewsItem.id).filter(
+                        NewsItem.url == url
                     ).first()
                     
                     if existing_news:
@@ -399,39 +406,40 @@ class HotNewsDiscoveryService:
                     
                     # 创建新的新闻记录
                     news_item = NewsItem(
-                        id=news_id,
                         title=news_data.get("title", ""),
                         content=news_data.get("content", ""),
                         summary=news_data.get("summary", news_data.get("title", "")[:200]),
                         source="hot_discovery",
+                        url=url,
                         source_url=news_data.get("source_url", ""),
                         published_at=news_data.get("published_at", datetime.now(timezone.utc)),
                         collected_at=datetime.now(timezone.utc),
                         language=news_data.get("language", "zh"),
                         region=news_data.get("region", "global"),
                         raw_data=raw_data,
-                        analysis_status="pending"
+                        analysis_status="pending",
                     )
                     
                     db.add(news_item)
+                    urls_in_batch.add(url)
                     saved_count += 1
                     
                 except Exception as item_error:
                     app_logger.error(f"保存单条热点新闻失败 {news_data.get('title', 'unknown')}: {item_error}")
                     continue
             
-            db.commit()
+            if saved_count > 0:
+                db.commit()
+                
             app_logger.info(f"热点新闻保存到数据库: {saved_count} 条")
             return saved_count
             
         except Exception as e:
             app_logger.error(f"保存热点新闻到数据库失败: {e}")
-            if 'db' in locals():
-                db.rollback()
+            db.rollback()
             return 0
         finally:
-            if 'db' in locals():
-                db.close()
+            db.close()
 
     def _enhanced_deduplicate(self, news_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """增强的去重机制"""
@@ -441,17 +449,18 @@ class HotNewsDiscoveryService:
             existing_urls = set()
             
             # 获取现有的热点新闻URL
-            existing_records = db.query(NewsItem.source_url).filter(
+            # 为兼容旧表结构，优先使用 url 做去重键
+            existing_records = db.query(NewsItem.url).filter(
                 NewsItem.source.in_(["hot_discovery", "google_news"])
             ).all()
-            existing_urls = {record.source_url for record in existing_records if record.source_url}
+            existing_urls = {record[0] for record in existing_records if record and record[0]}
             
             # 过滤掉已存在的新闻
             unique_news = []
             seen_titles = set()
             
             for news in news_items:
-                url = news.get("source_url", "")
+                url = news.get("source_url") or news.get("url") or ""
                 title = news.get("title", "").lower().strip()
                 
                 if url in existing_urls:
