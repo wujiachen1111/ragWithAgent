@@ -71,9 +71,9 @@ class DataIntelligenceSpecialist(BaseAgent):
 
         user = (
             f"分析标的: {', '.join(request.symbols)}\n"
-            f"事件: {request.topic}\n"
+            f"主题: {request.topic}\n"
+            f"内容: {request.content[:800]}\n"
             f"时间范围: {request.time_horizon}\n"
-            f"区域: {request.region or 'Global'}\n"
             "请提供当前市场数据快照和关键技术指标"
         )
 
@@ -154,7 +154,6 @@ class DataIntelligenceSpecialist(BaseAgent):
         user = (
             f"事件: {request.topic}\n"
             f"标的: {', '.join(request.symbols)}\n"
-            f"区域: {request.region}\n"
             "检测可能的市场异常和套利机会"
         )
 
@@ -258,7 +257,7 @@ class RiskController(BaseAgent):
             f"投资标的: {', '.join(request.symbols)}\n"
             f"投资期限: {request.time_horizon}\n"
             f"风险偏好: {request.risk_appetite}\n"
-            f"市场环境: {request.content[:800]}\n"
+            f"相关内容: {request.content[:800]}\n"
             "评估市场风险各维度"
         )
 
@@ -282,7 +281,6 @@ class RiskController(BaseAgent):
 
         user = (
             f"标的: {', '.join(request.symbols)}\n"
-            f"区域市场: {request.region}\n"
             f"时间范围: {request.time_horizon}\n"
             "评估流动性风险"
         )
@@ -308,7 +306,6 @@ class RiskController(BaseAgent):
 
         user = (
             f"投资标的: {', '.join(request.symbols)}\n"
-            f"投资区域: {request.region}\n"
             f"投资主题: {request.topic}\n"
             "评估投资集中度风险"
         )
@@ -332,7 +329,6 @@ class RiskController(BaseAgent):
         )
 
         user = (
-            f"投资区域: {request.region}\n"
             f"相关事件: {request.topic}\n"
             f"涉及标的: {', '.join(request.symbols)}\n"
             f"事件详情: {request.content[:1000]}\n"
@@ -496,6 +492,16 @@ class MacroStrategist(BaseAgent):
             macro_env, policy_impact, cross_market, secular_trends, client
         )
 
+        # 兼容：_assess_global_risks 可能返回字典列表，模型常以字符串列表表示
+        _risks = await self._assess_global_risks(request, client)
+        if _risks and isinstance(_risks[0], dict):
+            global_risk_factors = [
+                f"{r.get('risk_type', 'risk')}({r.get('impact_level', 'n/a')})"
+                for r in _risks
+            ]
+        else:
+            global_risk_factors = _risks or []
+
         return MacroStrategicView(
             macro_economic_backdrop=macro_env,
             policy_regime_analysis=policy_impact,
@@ -503,7 +509,7 @@ class MacroStrategist(BaseAgent):
             secular_trend_assessment=secular_trends,
             strategic_market_outlook=strategic_outlook,
             regime_change_indicators=await self._identify_regime_changes(request, client),
-            global_risk_factors=await self._assess_global_risks(request, client),
+            global_risk_factors=global_risk_factors,
             currency_impact_analysis=await self._analyze_currency_effects(request, client),
             analysis_timestamp=datetime.now().isoformat()
         )
@@ -517,10 +523,8 @@ class MacroStrategist(BaseAgent):
         )
 
         user = (
-            f"分析区域: {request.region or 'Global'}\n"
             f"相关事件: {request.topic}\n"
             f"时间框架: {request.time_horizon}\n"
-            f"事件内容: {request.content[:1000]}\n"
             "分析宏观经济环境"
         )
 
@@ -567,9 +571,8 @@ class MacroStrategist(BaseAgent):
             "返回JSON：equity_bond_correlation, commodity_linkage, fx_impact, capital_flows")
 
         user = (
-            f"主要市场: {request.region}\n"
             f"涉及标的: {', '.join(request.symbols)}\n"
-            f"市场事件: {request.topic}\n"
+            f"市场事件主题: {request.topic}\n"
             "分析跨市场动态关联"
         )
 
@@ -595,7 +598,6 @@ class MacroStrategist(BaseAgent):
             f"分析主题: {request.topic}\n"
             f"涉及行业/标的: {', '.join(request.symbols)}\n"
             f"时间视角: {request.time_horizon}\n"
-            f"内容: {request.content[:1000]}\n"
             "识别相关的长期结构性趋势"
         )
 
@@ -646,7 +648,6 @@ class MacroStrategist(BaseAgent):
 
         user = (
             f"观察事件: {request.topic}\n"
-            f"区域: {request.region}\n"
             f"内容: {request.content[:800]}\n"
             "识别制度变化的早期信号"
         )
@@ -666,7 +667,6 @@ class MacroStrategist(BaseAgent):
 
         user = (
             f"当前事件: {request.topic}\n"
-            f"全球背景: {request.content[:1000]}\n"
             "识别主要全球风险因素"
         )
 
@@ -691,7 +691,6 @@ class MacroStrategist(BaseAgent):
             "返回JSON：fx_trend, hedging_cost, fundamental_drivers, technical_signals")
 
         user = (
-            f"投资区域: {request.region}\n"
             f"标的货币敞口: {', '.join(request.symbols)}\n"
             f"相关事件: {request.topic}\n"
             "分析汇率对投资的影响"

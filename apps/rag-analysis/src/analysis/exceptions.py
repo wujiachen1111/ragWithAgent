@@ -36,7 +36,7 @@ class DataSourceException(BaseAnalysisException):
         super().__init__(
             message=message,
             error_code="DATA_SOURCE_ERROR",
-            details={**details or {}, "source": source}
+            details={**(details or {}), "source": source}
         )
 
 
@@ -47,7 +47,7 @@ class LLMServiceException(BaseAnalysisException):
         super().__init__(
             message=message,
             error_code="LLM_SERVICE_ERROR",
-            details={**details or {}, "model": model}
+            details={**(details or {}), "model": model}
         )
 
 
@@ -58,7 +58,7 @@ class AgentExecutionException(BaseAnalysisException):
         super().__init__(
             message=message,
             error_code="AGENT_EXECUTION_ERROR",
-            details={**details or {}, "agent_name": agent_name}
+            details={**(details or {}), "agent_name": agent_name}
         )
 
 
@@ -69,7 +69,7 @@ class ConfigurationException(BaseAnalysisException):
         super().__init__(
             message=message,
             error_code="CONFIGURATION_ERROR",
-            details={**details or {}, "config_key": config_key}
+            details={**(details or {}), "config_key": config_key}
         )
 
 
@@ -80,7 +80,7 @@ class ValidationException(BaseAnalysisException):
         super().__init__(
             message=message,
             error_code="VALIDATION_ERROR",
-            details={**details or {}, "field": field, "value": str(value)}
+            details={**(details or {}), "field": field, "value": str(value)}
         )
 
 
@@ -91,7 +91,7 @@ class NetworkException(BaseAnalysisException):
         super().__init__(
             message=message,
             error_code="NETWORK_ERROR",
-            details={**details or {}, "url": url, "status_code": status_code}
+            details={**(details or {}), "url": url, "status_code": status_code}
         )
 
 
@@ -102,6 +102,6 @@ class DatabaseException(BaseAnalysisException):
         super().__init__(
             message=message,
             error_code="DATABASE_ERROR",
-            details={**details or {}, "operation": operation}
+            details={**(details or {}), "operation": operation}
         )
 

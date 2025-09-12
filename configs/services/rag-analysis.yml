@@ -20,3 +20,11 @@ analysis:
     enabled: true
     cache_ttl: 3600
 
+dependencies:
+  yuqing_api_url: ${YUQING_API_URL:-"http://localhost:8000"}
+  sentiment_api_url: ${SENTIMENT_API_URL:-"http://localhost:8000"}
+  stock_api_url: ${STOCK_API_URL:-"http://localhost:8025"}
+
+llm:
+  gateway_url: ${LLM_GATEWAY_URL}
+

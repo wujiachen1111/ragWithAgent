@@ -1,10 +1,34 @@
 # 🎯 A股RAG模型训练 - 快速开始
 
-> **一键训练A股特化对比学习RAG模型，提升15-25%检索精度**
+> **一键训练A股特化对比学习RAG模型，可将特定场景检索精度提升15-25%**
 
-## ⚡ 立即开始
+## 📚 环境准备 (重要)
 
-### 🚀 一键训练 (推荐)
+在开始之前，请确保您的开发环境满足以下要求：
+
+1.  **Python 版本**:
+    -   请确保已安装 Python `3.8` 或更高版本。
+
+2.  **创建虚拟环境 (强烈推荐)**:
+    -   为了隔离项目依赖，避免与系统或其他项目产生冲突，建议创建一个虚拟环境。
+    ```bash
+    # 1. 创建虚拟环境
+    python -m venv venv
+
+    # 2. 激活虚拟环境
+    # Windows
+    # venv\Scripts\activate
+    # macOS / Linux
+    source venv/bin/activate
+    ```
+
+3.  **网络环境**:
+    -   首次训练会自动下载约 **1.3GB** 的预训练模型 (`BAAI/bge-large-zh-v1.5`)，请确保网络连接稳定。
+    -   如果下载速度慢，可使用国内镜像源：`export HF_ENDPOINT=https://hf-mirror.com`
+
+## ⚡ 快速训练
+
+### 🚀 一键启动 (推荐)
 
 ```bash
 # 进入项目根目录 (如果不在根目录)
@@ -40,10 +64,18 @@ python tools/development/quick_train_test.py --full-pipeline \
 python tools/development/quick_train_test.py --full-pipeline \
     --batch-size 16
 
-# 高精度长训练
-python tools/development/quick_train_test.py --full-pipeline \
-    --epochs 30 --learning-rate 2e-5
+# CPU训练 (较慢)
+export CUDA_VISIBLE_DEVICES=""
+python tools/development/quick_train_test.py --full-pipeline --batch-size 8
 ```
+
+### Apple Silicon (M系列芯片) Mac 用户
+对于使用M1/M2/M3等芯片的Mac用户，代码已进行适配以支持GPU加速。
+- **设备**: 训练将自动尝试使用 `mps` (Metal Performance Shaders)。
+- **性能**: 相比CPU有显著提升，但可能仍慢于同级别NVIDIA GPU。
+- **建议**:
+  - 使用较小的批次大小 (`--batch-size 8` 或 `16`) 开始。
+  - 如果遇到 `RuntimeError: MPS backend out of memory`，请进一步减小批次大小。
 
 ### 训练管理
 
@@ -150,35 +182,10 @@ curl -X POST http://localhost:8010/v1/analysis/execute \
 
 ## 📚 详细文档
 
-- 📖 [完整训练指南](docs/user-guide/RAG_TRAINING_GUIDE.md) - 424行详细文档
-- 🚀 [快速开始](docs/user-guide/GETTING_STARTED.md) - 系统快速启动
-- 📊 [技术概览](docs/TECHNICAL_OVERVIEW.md) - 技术架构说明
-- 🏗️ [架构指南](docs/architecture/) - 系统架构设计
+- 🚀 [快速开始指南](docs/user-guide/GETTING_STARTED.md) - 系统快速启动
+- 🏗️ [架构设计规划](docs/architecture/plan.md) - 系统架构设计
 
 ## 🆘 获取帮助
 
-```bash
-# 查看详细使用指南
-python tools/development/quick_train_test.py --usage
-
-# 查看脚本帮助
-python tools/development/training/train_contrastive_rag.py --help
-
-# 系统健康检查
-python tools/maintenance/health-check/check_all_services.py
 ```
-
----
-
-## 🎉 立即开始训练！
-
-**一键启动命令**：
-```bash
-python tools/development/quick_train_test.py --full-pipeline
 ```
-
-**20-30分钟后，您将拥有一个专业的A股特化RAG模型！** 🚀
-
----
-
-*💡 提示：首次训练会自动下载约1.3GB的BGE模型，请确保网络连接稳定。*

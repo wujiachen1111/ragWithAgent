@@ -12,6 +12,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # 项目根目录，确保能正确找到.env文件
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
 
+class ApiConfig(BaseModel):
+    """API 配置"""
+    host: str = "0.0.0.0"
+    port: int = 8010
+    debug: bool = False
+
 class LLMConfig(BaseModel):
     """LLM配置"""
     base_url: str = "http://localhost:8002/v1/chat/completions"
@@ -70,7 +76,7 @@ class SystemConfig(BaseSettings):
         env_file=ROOT_DIR / ".env",
         env_file_encoding='utf-8',
         env_nested_delimiter='__',
-        env_prefix='RAG_'  # 添加前缀以避免与其他服务的环境变量冲突
+        # env_prefix='RAG_'  # 移除前缀以简化配置
     )
 
     # 基础配置
@@ -79,6 +85,7 @@ class SystemConfig(BaseSettings):
     log_level: str = "INFO"
 
     # 组件配置
+    api: ApiConfig = Field(default_factory=ApiConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     sentiment_api: SentimentAPIConfig = Field(default_factory=SentimentAPIConfig)
     workflow: WorkflowConfig = Field(default_factory=WorkflowConfig)

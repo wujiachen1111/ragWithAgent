@@ -1,9 +1,25 @@
+from __future__ import annotations
+
+import sys
+from pathlib import Path
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 
-from yuqing.core import settings, app_logger, init_db, check_db_connection, check_redis_connection, check_chroma_connection
+# 确保本服务的 src 目录优先，避免与项目根级同名包冲突（如 services/*）
+_SRC_DIR = Path(__file__).resolve().parents[1]
+if str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
+
+from yuqing.core import (
+    settings,
+    app_logger,
+    init_db,
+    check_db_connection,
+    check_redis_connection,
+    check_chroma_connection,
+)
 from yuqing.api import api_router
 
 
@@ -95,6 +111,8 @@ async def health_check():
 
 # 注册API路由
 app.include_router(api_router, prefix="/api")
+# 提供版本化路径别名 /api/v1/*
+app.include_router(api_router, prefix="/api/v1")
 
 # 添加数据采集路由
 from yuqing.api.data_collection import router as data_collection_router
@@ -103,6 +121,7 @@ app.include_router(data_collection_router)
 # 添加实体分析路由
 from yuqing.api.entity_analysis import router as entity_analysis_router
 app.include_router(entity_analysis_router, prefix="/api")
+app.include_router(entity_analysis_router, prefix="/api/v1")
 
 
 if __name__ == "__main__":

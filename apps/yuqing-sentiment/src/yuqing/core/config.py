@@ -2,6 +2,7 @@ import os
 from typing import Optional
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from pathlib import Path
 
 
 class Settings(BaseSettings):
@@ -68,18 +69,20 @@ class Settings(BaseSettings):
     def load_api_keys(self):
         """从文件加载多个API密钥"""
         try:
-            keys_file = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "config", "api_keys.txt")
-            if os.path.exists(keys_file):
+            # 使用Pathlib构建更健壮的路径
+            root_dir = Path(__file__).resolve().parent.parent.parent.parent.parent.parent
+            keys_file = root_dir / "configs" / "api_keys.txt"
+            
+            if keys_file.exists():
                 with open(keys_file, 'r', encoding='utf-8') as f:
-                    keys = []
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith('#') and line.startswith('sk-'):
-                            keys.append(line)
+                    keys = [
+                        line.strip()
+                        for line in f
+                        if line.strip() and not line.strip().startswith('#') and line.strip().startswith('sk-')
+                    ]
                     
                     if keys:
                         self.deepseek_api_keys = keys
-                        # 设置第一个密钥为默认密钥
                         if not self.deepseek_api_key:
                             self.deepseek_api_key = keys[0]
                         print(f"已加载 {len(keys)} 个DeepSeek API密钥")

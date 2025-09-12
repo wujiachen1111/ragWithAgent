@@ -14,12 +14,27 @@ class LLMClient:
     """简单的 LLM 网关客户端，返回结构化 JSON。"""
 
     def __init__(
-            self,
-            base_url: Optional[str] = None,
-            model: Optional[str] = None,
-            timeout: float = 60.0):
-        self.base_url = base_url or os.getenv(
-            "LLM_GATEWAY_URL", "http://localhost:8002/v1/chat/completions")
+        self,
+        base_url: Optional[str] = None,
+        model: Optional[str] = None,
+        timeout: float = 60.0,
+    ):
+        # Base can be either full endpoint or gateway root; normalize to chat/completions
+        configured = base_url or os.getenv("LLM_GATEWAY_URL")
+        default_endpoint = "http://localhost:8002/v1/chat/completions"
+
+        if not configured:
+            self.endpoint = default_endpoint
+        else:
+            url = configured.rstrip("/")
+            if "chat/completions" in url:
+                self.endpoint = url
+            elif url.endswith("/v1"):
+                self.endpoint = f"{url}/chat/completions"
+            else:
+                # Assume raw host, append full path
+                self.endpoint = f"{url}/v1/chat/completions"
+
         self.model = model or os.getenv("LLM_MODEL", "deepseek-v3")
         self.timeout = timeout
         self._client = httpx.AsyncClient(timeout=timeout)
@@ -41,7 +56,7 @@ class LLMClient:
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
 
-        resp = await self._client.post(self.base_url, json=payload)
+        resp = await self._client.post(self.endpoint, json=payload)
         resp.raise_for_status()
         data = resp.json()
         content = data["choices"][0]["message"]["content"]

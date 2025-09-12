@@ -497,6 +497,16 @@ class MacroStrategist(BaseAgent):
             macro_env, policy_impact, cross_market, secular_trends, client
         )
 
+        # 兼容：global_risk_factors 期望字符串列表，必要时将字典映射为字符串
+        _risks = await self._assess_global_risks(request, client)
+        if _risks and isinstance(_risks[0], dict):
+            global_risk_factors = [
+                f"{r.get('risk_type', 'risk')}({r.get('impact_level', 'n/a')})"
+                for r in _risks
+            ]
+        else:
+            global_risk_factors = _risks or []
+
         return MacroStrategicView(
             macro_economic_backdrop=macro_env,
             policy_regime_analysis=policy_impact,
@@ -504,7 +514,7 @@ class MacroStrategist(BaseAgent):
             secular_trend_assessment=secular_trends,
             strategic_market_outlook=strategic_outlook,
             regime_change_indicators=await self._identify_regime_changes(request, client),
-            global_risk_factors=await self._assess_global_risks(request, client),
+            global_risk_factors=global_risk_factors,
             currency_impact_analysis=await self._analyze_currency_effects(request, client),
             analysis_timestamp=datetime.now().isoformat()
         )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from ..models.agents import AnalysisRequestVO, AnalysisResponseVO
+from ..models.agents import AnalysisRequestVO
+from ..models.enhanced_agents import EnhancedAnalysisResponseVO
 from .graph_workflow import AnalysisGraph
 
 
@@ -10,5 +11,5 @@ class AnalysisOrchestrator:
     def __init__(self):
         self.graph = AnalysisGraph()
 
-    async def execute(self, request: AnalysisRequestVO) -> AnalysisResponseVO:
+    async def execute(self, request: AnalysisRequestVO) -> EnhancedAnalysisResponseVO:
         return await self.graph.run(request)

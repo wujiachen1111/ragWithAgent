@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Optional
 from loguru import logger
 
 from ..core.database import db_manager
-from ..models.base import StockData, StockQuery, BatchProcessResult
+from ..models.base import StockQuery, BatchProcessResult
 from ..utils.helpers import prepare_mongodb_document
 from .data_fetcher import StockDataFetcher
 
